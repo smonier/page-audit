@@ -922,10 +922,10 @@
   resolved "https://registry.yarnpkg.com/@graphql-typed-document-node/core/-/core-3.2.0.tgz#5f3d96ec6b2354ad6d8a28bf216a1d97b5426861"
   integrity sha512-mB9oAsNCm9aM3/SOv4YtBMqZbYj10R7dkq8byBqxGY/ncFwhf2oQzMV+LCRlWoDSEBJ3COiR1yeDvMtsoOsuFQ==
 
-"@jahia/data-helper@^1.1.14":
-  version "1.1.20"
-  resolved "https://registry.yarnpkg.com/@jahia/data-helper/-/data-helper-1.1.20.tgz#b936f059da76205637d34deef74d019c2a2e3511"
-  integrity sha512-65Auuqu4PCbh9BtgdCxQIVWbXd3PmRQCoGx3omLBYCpTSaZ6Rr/mopqDx9WbVPgu/MOrSDkcoreDxa5k7WirCA==
+"@jahia/data-helper@^1.1.21":
+  version "1.1.21"
+  resolved "https://registry.yarnpkg.com/@jahia/data-helper/-/data-helper-1.1.21.tgz#d92503e2ada5e44a2d9f257c42fcfb39afcd68fb"
+  integrity sha512-LV+QIhCTbrozBDgdHkoaZ4+pyDPhJNMh2Din5QW+B5+NCuYwpV7k32hVldyjFtNQtR3ZZpFjpqMJB5nUT2yTrQ==
   dependencies:
     "@apollo/client" "^3.7.14"
     fast-deep-equal "^3.1.1"
