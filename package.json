@@ -17,7 +17,7 @@
     }
   },
   "dependencies": {
-    "@jahia/data-helper": "^1.1.14",
+    "@jahia/data-helper": "^1.2.0",
     "@jahia/moonstone": "^2.11.3",
     "@jahia/ui-extender": "^1.1.1",
     "axe-core": "^4.10.2",
