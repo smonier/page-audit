@@ -2,6 +2,7 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import {useTranslation} from 'react-i18next';
 import {MANUAL_CHECKLIST} from './a11yChecklist';
+import {AltAssist} from './AltAssist';
 import styles from './Tabs.module.css';
 
 const LEVELS = ['A', 'AA', 'AAA', 'BP'];
@@ -51,7 +52,7 @@ RuleDetails.propTypes = {
     onHighlight: PropTypes.func.isRequired
 };
 
-export function AccessibilityTab({result, onHighlight}) {
+export function AccessibilityTab({result, onHighlight, assist}) {
     const {t} = useTranslation('page-audit');
 
     return (
@@ -95,6 +96,8 @@ export function AccessibilityTab({result, onHighlight}) {
                     onHighlight={onHighlight}
                 />
             ))}
+
+            <AltAssist {...assist}/>
 
             {result.incomplete.length > 0 && (
                 <>
@@ -140,5 +143,7 @@ export function AccessibilityTab({result, onHighlight}) {
 
 AccessibilityTab.propTypes = {
     result: PropTypes.object.isRequired,
-    onHighlight: PropTypes.func.isRequired
+    onHighlight: PropTypes.func.isRequired,
+    // Props forwarded to <AltAssist/> (AI status, suggestions, phase, callbacks)
+    assist: PropTypes.object.isRequired
 };

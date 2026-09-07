@@ -162,6 +162,7 @@
             "truncated": "La réponse a été coupée par la limite AI_MAX_TOKENS : certaines recommandations peuvent manquer. Demandez à un administrateur d'augmenter AI_MAX_TOKENS dans la configuration du module.",
             "cost": "Coût estimé : {{cost}} $",
             "disclaimer": "Suggestions générées par IA : à relire avant application.",
+            "fix": "Correction proposée",
             "categories": {
                 "content": "Contenu",
                 "seo": "SEO",
@@ -242,6 +243,8 @@
                 "error": "Échec des suggestions IA",
                 "titles": "Balise title",
                 "descriptions": "Meta description",
+                "social": "Partage social (Open Graph)",
+                "socialHint": "og:title et og:description pour la carte de partage sur les réseaux sociaux et messageries - à renseigner dans les propriétés sociales/SEO de la page.",
                 "keywords": "Mots-clés",
                 "keywordsHint": "Mot-clé principal (foncé) et termes associés à intégrer dans les titres et le texte. Les moteurs ignorent la balise meta keywords : utilisez-les pour guider la rédaction, pas comme balise.",
                 "focus": "Mot-clé principal",
@@ -357,6 +360,19 @@
             "none": "Rien à améliorer dans cette catégorie."
         },
         "a11y": {
+            "alt": {
+                "title": "Texte alternatif IA",
+                "intro": "{{count}} image(s) sans attribut alt. Propose un texte alternatif rédigé dans la langue de la page ({{language}}) à partir de l'image et de son contexte, à coller dans le champ alt de l'image dans l'éditeur de contenu. Les images purement décoratives sont identifiées pour leur donner un alt vide.",
+                "generate": "Suggérer les textes alternatifs",
+                "regenerate": "Regénérer les textes alternatifs",
+                "generating": "Description des images… cela prend quelques secondes.",
+                "error": "Échec des suggestions de texte alternatif",
+                "decorative": "Décorative - utiliser un alt vide",
+                "noPicture": "décrite d'après le contexte seulement",
+                "noVision": "Note : {{provider}} ne traite pas les images - les suggestions sont déduites du nom de fichier et du texte environnant uniquement. Les modèles Anthropic et OpenAI voient l'image réelle.",
+                "noAnswer": "Aucune suggestion renvoyée pour cette image.",
+                "more": "{{count}} autre(s) image(s) sans alt n'ont pas été envoyées (8 par requête) - corrigez celles-ci, relancez l'audit puis suggérez de nouveau."
+            },
             "levels": {
                 "A": "WCAG A",
                 "AA": "WCAG AA",

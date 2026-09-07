@@ -162,6 +162,7 @@
             "truncated": "The answer was cut short by the AI_MAX_TOKENS limit - some recommendations may be missing. Ask an administrator to raise AI_MAX_TOKENS in the module configuration.",
             "cost": "Estimated cost: ${{cost}}",
             "disclaimer": "AI-generated suggestions: review before acting on them.",
+            "fix": "Suggested fix",
             "categories": {
                 "content": "Content",
                 "seo": "SEO",
@@ -242,6 +243,8 @@
                 "error": "AI suggestions failed",
                 "titles": "Title tag",
                 "descriptions": "Meta description",
+                "social": "Social sharing (Open Graph)",
+                "socialHint": "og:title and og:description for the sharing card on social networks and chat tools - fill them in the page's social/SEO properties.",
                 "keywords": "Keywords",
                 "keywordsHint": "Focus keyword (dark) and supporting terms to weave into headings and copy. Search engines ignore the meta keywords tag - use these to guide the writing, not as a tag.",
                 "focus": "Focus keyword",
@@ -357,6 +360,19 @@
             "none": "Nothing to improve in this category."
         },
         "a11y": {
+            "alt": {
+                "title": "AI alt text",
+                "intro": "{{count}} image(s) have no alt attribute. Suggest alternative text written in the page language ({{language}}) from the picture and its context, then paste it into the image's alt field in Content Editor. Purely decorative images are identified so you can give them an empty alt.",
+                "generate": "Suggest alt text",
+                "regenerate": "Regenerate alt text",
+                "generating": "Describing the images… this takes a few seconds.",
+                "error": "Alt text suggestions failed",
+                "decorative": "Decorative - use an empty alt",
+                "noPicture": "described from context only",
+                "noVision": "Note: {{provider}} does not process images - suggestions are inferred from file names and surrounding text only. Anthropic and OpenAI models see the actual picture.",
+                "noAnswer": "No suggestion returned for this image.",
+                "more": "{{count}} more image(s) without alt were not sent (8 per request) - fix these first, re-run the audit and suggest again."
+            },
             "levels": {
                 "A": "WCAG A",
                 "AA": "WCAG AA",

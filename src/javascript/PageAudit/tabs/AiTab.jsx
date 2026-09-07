@@ -1,6 +1,7 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 import {useTranslation} from 'react-i18next';
+import {CopyButton} from './CopyButton';
 import styles from './Tabs.module.css';
 
 export function AiTab({status, review, phase, error, onGenerate, onHighlightText}) {
@@ -89,6 +90,13 @@ export function AiTab({status, review, phase, error, onGenerate, onHighlightText
                                             {t('a11y.highlight')}
                                         </button>
                                     </>
+                                )}
+                                {rec.fix && (
+                                    <div className={styles.headingSuggested}>
+                                        <span className={styles.levelChip}>{t('ai.fix')}</span>
+                                        <strong>{rec.fix}</strong>
+                                        <CopyButton text={rec.fix}/>
+                                    </div>
                                 )}
                             </div>
                         </div>

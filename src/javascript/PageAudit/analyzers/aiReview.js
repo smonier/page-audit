@@ -147,6 +147,136 @@ export function requestSeoAssist({language, path, results, frame}) {
     });
 }
 
+// Alt text: images per request (server cap too) and thumbnail edge for vision models
+const ALT_MAX_IMAGES = 8;
+const THUMB_MAX_PX = 512;
+
+/** Stable CSS selector for an element of the preview document (for highlight after the audit). */
+function cssPath(el) {
+    const doc = el.ownerDocument;
+    const win = doc.defaultView;
+    const escape = id => (win && win.CSS && win.CSS.escape ? win.CSS.escape(id) : id);
+    const parts = [];
+    let node = el;
+    while (node && node.nodeType === 1 && node !== doc.body) {
+        if (node.id) {
+            parts.unshift(`#${escape(node.id)}`);
+            break;
+        }
+
+        let selector = node.tagName.toLowerCase();
+        const parent = node.parentElement;
+        if (parent) {
+            const siblings = Array.from(parent.children).filter(c => c.tagName === node.tagName);
+            if (siblings.length > 1) {
+                selector += `:nth-of-type(${siblings.indexOf(node) + 1})`;
+            }
+        }
+
+        parts.unshift(selector);
+        node = parent;
+    }
+
+    return parts.join(' > ');
+}
+
+/**
+ * Downscaled JPEG copy of a loaded image for the vision model, or null when
+ * the pixels are unreadable (cross-origin image taints the canvas).
+ */
+function thumbnail(img, doc) {
+    if (!img.complete || !img.naturalWidth) {
+        return null;
+    }
+
+    const scale = Math.min(1, THUMB_MAX_PX / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = doc.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    try {
+        const ctx = canvas.getContext('2d');
+        // White backing: JPEG has no alpha and transparent logos would turn black
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        return {mediaType: 'image/jpeg', data: canvas.toDataURL('image/jpeg', 0.7).split(',')[1]};
+    } catch (e) {
+        return null;
+    }
+}
+
+const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+
+/**
+ * Images without an alt attribute, largest first, with the DOM context the
+ * model needs (caption, nearest preceding heading, surrounding text, link
+ * target) and a thumbnail when readable.
+ */
+export function collectImagesWithoutAlt(frame, withPictures = true) {
+    const doc = frame && frame.contentDocument;
+    if (!doc || !doc.body) {
+        return {items: [], total: 0};
+    }
+
+    const headings = Array.from(doc.querySelectorAll('h1, h2, h3'));
+    const all = Array.from(doc.images).filter(img => !img.hasAttribute('alt'));
+    const ranked = all
+        .map(img => ({img, area: img.clientWidth * img.clientHeight}))
+        .sort((a, b) => b.area - a.area)
+        .slice(0, ALT_MAX_IMAGES);
+
+    const items = ranked.map(({img}, index) => {
+        const figure = img.closest('figure');
+        const caption = figure && figure.querySelector('figcaption');
+        const heading = headings.filter(h => h.compareDocumentPosition(img) & 4 /* FOLLOWING */).pop();
+        const block = img.closest('p, li, figure, article, section, div');
+        const link = img.closest('a[href]');
+        const src = img.currentSrc || img.src || '';
+        const thumb = withPictures ? thumbnail(img, doc) : null;
+        return {
+            id: index,
+            selector: cssPath(img),
+            src,
+            filename: src.split('?')[0].split('/').pop() || '',
+            width: img.clientWidth,
+            height: img.clientHeight,
+            linkTarget: link ? link.getAttribute('href') : '',
+            caption: caption ? clean(caption.textContent) : '',
+            heading: heading ? clean(heading.textContent) : '',
+            context: block ? clean(block.textContent).slice(0, 400) : '',
+            hasPicture: Boolean(thumb),
+            ...(thumb || {})
+        };
+    });
+
+    return {items, total: all.length};
+}
+
+/**
+ * Alt text suggestions for the page's images without alt. Thumbnails are only
+ * produced when the configured provider processes images (aiStatus.vision).
+ * Returns the server answer merged with the collected items (thumbnail data
+ * stripped - the result is cached in localStorage).
+ */
+export async function requestAltAssist({language, path, results, frame, aiStatus}) {
+    const {items, total} = collectImagesWithoutAlt(frame, Boolean(aiStatus && aiStatus.vision));
+    const stripped = items.map(({data, mediaType, ...rest}) => rest);
+    if (items.length === 0) {
+        return {images: [], items: stripped, total};
+    }
+
+    const answer = await postTask({
+        task: 'alt',
+        language,
+        uiLanguage: (window.contextJsParameters && window.contextJsParameters.uilang) || language,
+        path,
+        title: results.seo && results.seo.title ? results.seo.title.text : '',
+        images: items
+    });
+
+    return {...answer, items: stripped, total};
+}
+
 export function requestAiReview({language, path, results, frame}) {
     const payload = {
         language,

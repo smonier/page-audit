@@ -354,8 +354,24 @@
 .headingSuggested {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
     margin-top: 4px;
+}
+
+.altThumb {
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    border-radius: 4px;
+    background: #eef1f3;
+    flex-shrink: 0;
+}
+
+.altMeta {
+    font-size: 11px;
+    color: #6b7a86;
+    word-break: break-all;
 }
 
 .previewCard {

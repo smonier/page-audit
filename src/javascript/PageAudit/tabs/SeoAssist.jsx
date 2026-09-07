@@ -88,6 +88,15 @@ export function SeoAssist({aiStatus, assist, phase, error, language, onGenerate,
                         </>
                     )}
 
+                    {assist.social && (assist.social.title || assist.social.description) && (
+                        <>
+                            <h5 className={styles.subTitle}>{t('seo.assist.social')}</h5>
+                            <p className={styles.note}>{t('seo.assist.socialHint')}</p>
+                            {assist.social.title && suggestionList([assist.social.title], 30, 60)}
+                            {assist.social.description && suggestionList([assist.social.description], 80, 150)}
+                        </>
+                    )}
+
                     {(assist.keywords.focus || assist.keywords.secondary.length > 0) && (
                         <>
                             <h5 className={styles.subTitle}>{t('seo.assist.keywords')}</h5>

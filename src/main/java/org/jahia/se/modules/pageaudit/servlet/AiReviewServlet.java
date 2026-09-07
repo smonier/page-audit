@@ -63,6 +63,10 @@ public class AiReviewServlet extends HttpServlet {
     private static final int MAX_KEYWORDS = 8;
     private static final int MAX_HEADING_SUGGESTIONS = 8;
     private static final int MAX_SUGGESTION_CHARS = 300;
+    // Alt text task: images per request and per-image inline data cap (base64 chars, ~300 kB)
+    private static final int MAX_ALT_IMAGES = 8;
+    private static final int MAX_IMAGE_BASE64_CHARS = 400_000;
+    private static final int MAX_CONTEXT_CHARS = 600;
 
     // Per-user sliding-window rate limit: protects the shared provider quota / cost
     // from a single caller (e.g. 30 reviews per 10 minutes per user).
@@ -102,14 +106,19 @@ public class AiReviewServlet extends HttpServlet {
             + "\"ecodesign\",\n"
             + "      \"title\": \"short actionable title\",\n"
             + "      \"detail\": \"1-3 sentences: why it matters and how to fix it\",\n"
-            + "      \"wording\": \"exact text quoted from the page when the issue concerns specific wording, else empty string\"\n"
+            + "      \"wording\": \"exact text quoted from the page when the issue concerns specific wording, else empty string\",\n"
+            + "      \"fix\": \"the corrected or improved text ready to paste in place of \\\"wording\\\" (typo fixed, "
+            + "clearer CTA label, consistent term, translated fragment…), else empty string\"\n"
             + "    }\n"
             + "  ]\n"
             + "}\n"
             + "Maximum 15 recommendations, most important first. "
-            + "You MUST write every user-facing string (summary, title, detail) in the REPORT LANGUAGE stated in the "
-            + "input - regardless of the language of the page text. Only the \"wording\" field keeps the page's own "
-            + "language, since it quotes the page verbatim.";
+            + "LANGUAGE RULES: the input states a PAGE LANGUAGE and a REPORT LANGUAGE, which may differ. Content written "
+            + "in the PAGE LANGUAGE is correct by definition - never recommend translating the page into the REPORT "
+            + "LANGUAGE; only fragments in some OTHER language are localization issues. "
+            + "You MUST write summary, title and detail in the REPORT LANGUAGE (they are read by the editor). "
+            + "\"wording\" quotes the page verbatim. \"fix\" MUST be written in the PAGE LANGUAGE, because it is "
+            + "content that will be published in place of \"wording\".";
 
     /**
      * SEO assist task: unlike the review (prose FOR the editor, in the UI language),
@@ -127,6 +136,10 @@ public class AiReviewServlet extends HttpServlet {
             + "{\n"
             + "  \"titles\": [\"2 alternative <title> tags, 30-60 characters, primary keyword near the start\"],\n"
             + "  \"metaDescriptions\": [\"3 alternative meta descriptions, 120-155 characters each, one clear benefit + implicit call to click\"],\n"
+            + "  \"social\": {\n"
+            + "    \"title\": \"og:title for social sharing cards, max 60 characters, catchier than the <title>, no brand suffix needed\",\n"
+            + "    \"description\": \"og:description, 80-150 characters, written to make people stop scrolling and click\"\n"
+            + "  },\n"
             + "  \"keywords\": {\n"
             + "    \"focus\": \"the single primary keyword or phrase this page should rank for\",\n"
             + "    \"secondary\": [\"3-6 related terms or long-tail phrases already supported by the page text\"]\n"
@@ -141,9 +154,40 @@ public class AiReviewServlet extends HttpServlet {
             + "  ]\n"
             + "}\n"
             + "Only include headings that genuinely benefit from a rewrite (maximum 6); keep good headings out. "
-            + "LANGUAGE RULES: titles, metaDescriptions, keywords and every \"suggested\" heading MUST be written in %1$s, "
+            + "LANGUAGE RULES: titles, metaDescriptions, social, keywords and every \"suggested\" heading MUST be written in %1$s, "
             + "because they will be published to the page's visitors. "
             + "Every \"reason\" MUST be written in %2$s, because it is read by the editor.";
+
+    /**
+     * Alt text task: one call for every image of the page that lacks an alt
+     * attribute. Each image comes with its DOM context (caption, nearest
+     * heading, surrounding text, link target) and, when the browser could read
+     * its pixels (same-origin, not tainted), a downscaled copy for vision models.
+     */
+    private static final String ALT_TEXT_PROMPT =
+            "You write alternative text for images on a CMS page, for screen reader users and search engines. "
+            + "For each IMAGE #n you receive its file name, rendered size, whether it is a link, nearby text "
+            + "(caption, nearest heading, surrounding paragraph) and, when available, the picture itself.\n\n"
+            + "Reply ONLY with a valid JSON object. No markdown, no code fences, no comments, no trailing commas.\n"
+            + "JSON structure:\n"
+            + "{\n"
+            + "  \"images\": [\n"
+            + "    {\n"
+            + "      \"id\": <the image number n>,\n"
+            + "      \"decorative\": true | false,\n"
+            + "      \"alt\": \"the alternative text, or empty string when decorative\",\n"
+            + "      \"reason\": \"one sentence explaining the choice\"\n"
+            + "    }\n"
+            + "  ]\n"
+            + "}\n"
+            + "Rules: alt is at most 125 characters; it conveys the image's content or, for a linked image, its "
+            + "purpose/destination; never starts with 'image of' / 'picture of' / 'photo of'; no keyword stuffing; "
+            + "does not repeat an adjacent caption or heading verbatim. Mark decorative=true (with alt \"\") when the "
+            + "image is purely aesthetic (background, divider, flourish) or fully redundant with adjacent text. "
+            + "When the picture itself is not provided, infer from the context and say so in the reason (lower confidence). "
+            + "Answer for every image id you received, in the same order.\n"
+            + "LANGUAGE RULES: every \"alt\" MUST be written in %1$s (it is published to the page's visitors); "
+            + "every \"reason\" MUST be written in %2$s (it is read by the editor).";
 
     @Reference
     private PageAuditConfigService configService;
@@ -159,6 +203,7 @@ public class AiReviewServlet extends HttpServlet {
         status.put("enabled", configService.isAiEnabled());
         status.put("provider", configService.getProvider());
         status.put("model", configService.getModel());
+        status.put("vision", supportsVision(configService.getProvider()));
         writeJson(res, HttpServletResponse.SC_OK, status);
     }
 
@@ -208,24 +253,50 @@ public class AiReviewServlet extends HttpServlet {
             return;
         }
 
-        // Two server-defined tasks share the endpoint and its guards; the client
+        // Server-defined tasks share the endpoint and its guards; the client
         // only picks which one, never the prompt.
-        boolean seoTask = "seo".equalsIgnoreCase(payload.optString("task", "review"));
-        String userContent = seoTask ? buildSeoAssistContent(payload) : buildUserContent(payload);
+        String task = payload.optString("task", "review").toLowerCase();
+        String systemPrompt;
+        String userContent;
+        JSONArray images = new JSONArray();
+        switch (task) {
+            case "seo":
+                systemPrompt = languagePrompt(SEO_ASSIST_PROMPT, payload);
+                userContent = buildSeoAssistContent(payload);
+                break;
+            case "alt":
+                systemPrompt = languagePrompt(ALT_TEXT_PROMPT, payload);
+                userContent = buildAltContent(payload, images, supportsVision(configService.getProvider()));
+                break;
+            default:
+                task = "review";
+                systemPrompt = SYSTEM_PROMPT;
+                userContent = buildUserContent(payload);
+        }
+
         String provider = configService.getProvider();
         String model = configService.getModel();
 
         String rawAnswer = null;
         try {
-            JSONObject providerResult = callProvider(provider, model, seoTask ? seoAssistPrompt(payload) : SYSTEM_PROMPT, userContent);
+            JSONObject providerResult = callProvider(provider, model, systemPrompt, userContent, images);
             rawAnswer = providerResult.getString("text");
-            JSONObject review = seoTask ? parseSeoAssist(rawAnswer) : parseReview(rawAnswer);
+            JSONObject review;
+            if ("seo".equals(task)) {
+                review = parseSeoAssist(rawAnswer);
+            } else if ("alt".equals(task)) {
+                review = parseAltText(rawAnswer);
+                review.put("vision", images.length() > 0);
+            } else {
+                review = parseReview(rawAnswer);
+            }
+
             review.put("provider", provider);
             review.put("model", model);
             if (providerResult.optBoolean("truncated", false)) {
                 review.put("truncated", true);
                 logger.warn("AI {} answer truncated by AI_MAX_TOKENS ({}); complete items were salvaged",
-                        seoTask ? "SEO assist" : "review", configService.getMaxTokens());
+                        task, configService.getMaxTokens());
             }
 
             long inputTokens = providerResult.optLong("inputTokens", -1);
@@ -244,7 +315,7 @@ public class AiReviewServlet extends HttpServlet {
 
             writeJson(res, HttpServletResponse.SC_OK, review);
         } catch (Exception e) {
-            logger.error("AI {} failed", seoTask ? "SEO assist" : "review", e);
+            logger.error("AI {} failed", task, e);
             if (rawAnswer != null) {
                 // Server-side only: the start of the unparseable answer is the one
                 // clue to a prompt/model mismatch (prose preamble, refusal, empty content)
@@ -261,7 +332,8 @@ public class AiReviewServlet extends HttpServlet {
         String pageLanguage = payload.optString("language", "en");
         String uiLanguage = payload.optString("uiLanguage", pageLanguage);
         sb.append("REPORT LANGUAGE: ").append(languageName(uiLanguage)).append('\n');
-        sb.append("PAGE LANGUAGE: ").append(pageLanguage).append('\n');
+        sb.append("PAGE LANGUAGE: ").append(languageName(pageLanguage))
+                .append(" (the page is meant to be in this language)\n");
         sb.append("PAGE PATH: ").append(payload.optString("path", "")).append('\n');
         sb.append("TITLE: ").append(payload.optString("title", "")).append('\n');
         sb.append("META DESCRIPTION: ").append(payload.optString("description", "")).append("\n\n");
@@ -286,11 +358,79 @@ public class AiReviewServlet extends HttpServlet {
         return sb.toString();
     }
 
-    /** The SEO assist system prompt with the page and report language names spelled out (a reference to "the input" is not followed reliably). */
-    private String seoAssistPrompt(JSONObject payload) {
+    /** Formats a prompt template with %1$s = page language name, %2$s = report (UI) language name - a reference to "the input" is not followed reliably. */
+    private String languagePrompt(String template, JSONObject payload) {
         String pageLanguage = payload.optString("language", "en");
         String uiLanguage = payload.optString("uiLanguage", pageLanguage);
-        return String.format(SEO_ASSIST_PROMPT, languageName(pageLanguage), languageName(uiLanguage));
+        return String.format(template, languageName(pageLanguage), languageName(uiLanguage));
+    }
+
+    /**
+     * Whether the provider's chat endpoint processes inline images. DeepSeek
+     * accepts {@code image_url} parts but silently ignores them (prompt token
+     * count does not grow), so attaching pictures there only wastes bandwidth
+     * and misleads the editor.
+     */
+    private boolean supportsVision(String provider) {
+        return "anthropic".equalsIgnoreCase(provider) || "openai".equalsIgnoreCase(provider);
+    }
+
+    /**
+     * Input for the alt text task. When {@code vision} is true, fills
+     * {@code images} with the validated inline pictures ({id, mediaType, data})
+     * in the same order as the IMAGE #n blocks; otherwise every image is
+     * described from context only.
+     */
+    private String buildAltContent(JSONObject payload, JSONArray images, boolean vision) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("PAGE PATH: ").append(payload.optString("path", "")).append('\n');
+        sb.append("PAGE TITLE: ").append(payload.optString("title", "")).append("\n\n");
+
+        JSONArray items = payload.optJSONArray("images");
+        int count = items == null ? 0 : Math.min(items.length(), MAX_ALT_IMAGES);
+        for (int i = 0; i < count; i++) {
+            JSONObject img = items.optJSONObject(i);
+            if (img == null) {
+                continue;
+            }
+
+            int id = img.optInt("id", i);
+            sb.append("IMAGE #").append(id).append('\n');
+            sb.append("- file: ").append(clipTo(img.optString("filename", ""), 200)).append('\n');
+            sb.append("- rendered size: ").append(img.optInt("width", 0)).append('x').append(img.optInt("height", 0)).append('\n');
+            if (!img.optString("linkTarget", "").isBlank()) {
+                sb.append("- is a link to: ").append(clipTo(img.optString("linkTarget", ""), 200)).append('\n');
+            }
+
+            appendIfPresent(sb, "caption", img.optString("caption", ""));
+            appendIfPresent(sb, "nearest heading", img.optString("heading", ""));
+            appendIfPresent(sb, "surrounding text", img.optString("context", ""));
+
+            String data = img.optString("data", "");
+            String mediaType = img.optString("mediaType", "");
+            boolean validType = mediaType.equals("image/jpeg") || mediaType.equals("image/png") || mediaType.equals("image/webp");
+            if (vision && !data.isBlank() && validType && data.length() <= MAX_IMAGE_BASE64_CHARS && data.matches("[A-Za-z0-9+/=]+")) {
+                images.put(new JSONObject().put("id", id).put("mediaType", mediaType).put("data", data));
+                sb.append("- picture: attached below as IMAGE #").append(id).append('\n');
+            } else {
+                sb.append("- picture: not available (infer from context)\n");
+            }
+
+            sb.append('\n');
+        }
+
+        return sb.toString();
+    }
+
+    private void appendIfPresent(StringBuilder sb, String label, String value) {
+        if (value != null && !value.isBlank()) {
+            sb.append("- ").append(label).append(": ").append(clipTo(value, MAX_CONTEXT_CHARS)).append('\n');
+        }
+    }
+
+    private String clipTo(String value, int max) {
+        String trimmed = value == null ? "" : value.trim().replaceAll("\\s+", " ");
+        return trimmed.length() > max ? trimmed.substring(0, max) : trimmed;
     }
 
     /** Input for the SEO assist task: current SEO state + headings + SEO findings + page text. */
@@ -373,8 +513,13 @@ public class AiReviewServlet extends HttpServlet {
         return isoCode;
     }
 
-    /** Returns {text, inputTokens, outputTokens} extracted from the provider envelope. */
-    private JSONObject callProvider(String provider, String model, String basePrompt, String userContent) throws IOException {
+    /**
+     * Returns {text, inputTokens, outputTokens, truncated} extracted from the
+     * provider envelope. {@code images} ({id, mediaType, data}) are attached as
+     * multimodal parts after the text in each provider's own format; an empty
+     * array keeps the plain-string content every provider accepts.
+     */
+    private JSONObject callProvider(String provider, String model, String basePrompt, String userContent, JSONArray images) throws IOException {
         String systemPrompt = basePrompt;
         String appendix = configService.getPromptAppendix();
         if (!appendix.isBlank()) {
@@ -385,12 +530,35 @@ public class AiReviewServlet extends HttpServlet {
         body.put("model", model);
         body.put("max_tokens", configService.getMaxTokens());
 
+        boolean openAiStyle = "openai".equalsIgnoreCase(provider) || "deepseek".equalsIgnoreCase(provider);
+        Object userMessage = userContent;
+        if (images.length() > 0) {
+            JSONArray parts = new JSONArray();
+            parts.put(new JSONObject().put("type", "text").put("text", userContent));
+            for (int i = 0; i < images.length(); i++) {
+                JSONObject img = images.getJSONObject(i);
+                parts.put(new JSONObject().put("type", "text").put("text", "IMAGE #" + img.getInt("id") + ":"));
+                if (openAiStyle) {
+                    String dataUrl = "data:" + img.getString("mediaType") + ";base64," + img.getString("data");
+                    parts.put(new JSONObject().put("type", "image_url")
+                            .put("image_url", new JSONObject().put("url", dataUrl)));
+                } else {
+                    parts.put(new JSONObject().put("type", "image").put("source", new JSONObject()
+                            .put("type", "base64")
+                            .put("media_type", img.getString("mediaType"))
+                            .put("data", img.getString("data"))));
+                }
+            }
+
+            userMessage = parts;
+        }
+
         String targetUrl;
-        if ("openai".equalsIgnoreCase(provider) || "deepseek".equalsIgnoreCase(provider)) {
+        if (openAiStyle) {
             targetUrl = "openai".equalsIgnoreCase(provider) ? OPENAI_URL : DEEPSEEK_URL;
             JSONArray messages = new JSONArray();
             messages.put(new JSONObject().put("role", "system").put("content", systemPrompt));
-            messages.put(new JSONObject().put("role", "user").put("content", userContent));
+            messages.put(new JSONObject().put("role", "user").put("content", userMessage));
             body.put("messages", messages);
             if ("deepseek".equalsIgnoreCase(provider)) {
                 // DeepSeek V4 models reason by default: the hidden reasoning_content
@@ -403,7 +571,7 @@ public class AiReviewServlet extends HttpServlet {
             targetUrl = ANTHROPIC_URL;
             body.put("system", systemPrompt);
             JSONArray messages = new JSONArray();
-            messages.put(new JSONObject().put("role", "user").put("content", userContent));
+            messages.put(new JSONObject().put("role", "user").put("content", userMessage));
             body.put("messages", messages);
         }
 
@@ -499,6 +667,7 @@ public class AiReviewServlet extends HttpServlet {
                 safeRec.put("title", r.optString("title", ""));
                 safeRec.put("detail", r.optString("detail", ""));
                 safeRec.put("wording", r.optString("wording", ""));
+                safeRec.put("fix", clip(r.optString("fix", "")));
                 safeRecs.put(safeRec);
             }
         }
@@ -523,6 +692,12 @@ public class AiReviewServlet extends HttpServlet {
         JSONObject safe = new JSONObject();
         safe.put("titles", safeStrings(parsed.optJSONArray("titles"), MAX_SUGGESTIONS));
         safe.put("metaDescriptions", safeStrings(parsed.optJSONArray("metaDescriptions"), MAX_SUGGESTIONS));
+
+        JSONObject social = parsed.optJSONObject("social");
+        JSONObject safeSocial = new JSONObject();
+        safeSocial.put("title", clip(social == null ? "" : social.optString("title", "")));
+        safeSocial.put("description", clip(social == null ? "" : social.optString("description", "")));
+        safe.put("social", safeSocial);
 
         JSONObject keywords = parsed.optJSONObject("keywords");
         JSONObject safeKeywords = new JSONObject();
@@ -549,6 +724,39 @@ public class AiReviewServlet extends HttpServlet {
         }
 
         safe.put("headings", safeHeadings);
+        return safe;
+    }
+
+    /** Whitelisting parser for the alt text answer: bounded list of {id, decorative, alt, reason}. */
+    private JSONObject parseAltText(String rawAnswer) {
+        String cleaned = rawAnswer.trim();
+        int start = cleaned.indexOf('{');
+        if (start < 0) {
+            throw new IllegalStateException("model did not return JSON");
+        }
+
+        JSONObject parsed = parseLenient(cleaned.substring(start));
+        JSONArray safeImages = new JSONArray();
+        JSONArray images = parsed.optJSONArray("images");
+        if (images != null) {
+            for (int i = 0; i < Math.min(images.length(), MAX_ALT_IMAGES); i++) {
+                JSONObject img = images.optJSONObject(i);
+                if (img == null || !img.has("id")) {
+                    continue;
+                }
+
+                JSONObject safeImg = new JSONObject();
+                safeImg.put("id", img.optInt("id", -1));
+                boolean decorative = img.optBoolean("decorative", false);
+                safeImg.put("decorative", decorative);
+                safeImg.put("alt", decorative ? "" : clip(img.optString("alt", "")));
+                safeImg.put("reason", clip(img.optString("reason", "")));
+                safeImages.put(safeImg);
+            }
+        }
+
+        JSONObject safe = new JSONObject();
+        safe.put("images", safeImages);
         return safe;
     }
 

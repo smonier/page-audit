@@ -30,7 +30,10 @@ This module is a **Track 2 OSGi UI extension** (see AIStartupKit CLAUDE.md): Mav
 - **SEO assist** shares the AI endpoint via `{"task": "seo"}` (server picks `SEO_ASSIST_PROMPT` + `parseSeoAssist`; the client never sends a prompt). Language rule differs from the review: suggested titles/descriptions/keywords/headings are PUBLISHED content → **page language**; only `reason` is editor prose → UI language. Both language names are `String.format`-ed into the system prompt - "the language stated in the input" was NOT followed reliably by a non-reasoning model.
 - **DeepSeek V4 models reason by default**: `reasoning_content` eats the `max_tokens` budget (empty `content`, 29 s, "model did not return JSON") and even a completed answer ignores the JSON-only instruction. The servlet sends `thinking: {type: disabled}` for the deepseek provider - structured extraction never needs chain-of-thought. Do not add that param for OpenAI (unknown params are rejected with 400).
 - On an unparseable model answer the servlet logs the first 500 chars server-side (`Unparseable model answer`) - read that before touching the prompt. `docker logs` is empty for the local container; the log is `/var/log/jahia/jahia.log` inside it.
-- `aiStatus` ({enabled, provider, model}) is fetched once in the drawer per opening and passed to both `AiTab` and `SeoAssist`; `SeoAssist` renders nothing when AI is not configured. `seoAssist` rides in the same cache entry as `aiReview` (both saves must carry both keys or one wipes the other).
+- `aiStatus` ({enabled, provider, model, vision}) is fetched once in the drawer per opening and passed to `AiTab`, `SeoAssist` and `AltAssist`; the assist sections render nothing when AI is not configured. All AI results (`aiReview`, `seoAssist`, `altAssist`) ride in ONE cache entry - `persistAi(override)` always writes all three, and every AI task goes through `runAiTask` (one lifecycle: click → running/done/error → persist). Never auto-trigger a task.
+- **DeepSeek is text-only**: it accepts OpenAI-style `image_url` parts without error but ignores them (prompt_tokens does not grow: 34 tokens with a photo attached). `supportsVision(provider)` is an explicit allowlist (anthropic, openai); the GET status exposes it as `vision`, the client skips thumbnail generation when false, the answer carries `vision` and the UI labels items "described from context only". Verify with the token count, not with the model's prose - it happily "describes" pictures it never saw.
+- Alt text task: the client collects `img:not([alt])` largest-first (8 max, server cap too), builds a `cssPath` selector for later highlight, and draws a ≤512px JPEG thumbnail on a canvas (white backing - JPEG has no alpha) inside a try/catch: cross-origin images taint the canvas and throw. Thumbnail `data` is stripped before caching (localStorage quota). Server validates media type (jpeg/png/webp), base64 charset and size (400k chars) before attaching.
+- The review prompt states BOTH language names explicitly (`PAGE LANGUAGE: English (the page is meant to be in this language)`), with the rule "content in the page language is correct by definition". With a bare ISO code (`en`) next to a spelled-out `REPORT LANGUAGE: French`, the model concluded the page should be French, flagged the whole English page as a localization defect, and wrote every `fix` in French.
 - All analyzers receive the iframe element and must throw (not silently return) when `contentDocument` is unavailable.
 
 ## Layout
@@ -42,8 +45,8 @@ src/javascript/
 └── PageAudit/
     ├── PageAuditAction.jsx   # useNodeChecks (jnt:page + module-on-site) → portal drawer
     ├── PageAuditDrawer.jsx   # iframe lifecycle, tabs, highlight, export
-    ├── analyzers/            # accessibility (axe), webVitals (PerformanceObserver), readability
-    └── tabs/                 # presentation components
+    ├── analyzers/            # accessibility (axe), webVitals, readability, seo, links, jahiaHealth, ecodesign, aiReview (3 AI tasks)
+    └── tabs/                 # presentation components + AI assist sections (SeoAssist, AltAssist, CopyButton)
 ```
 
 ## Relevant AIStartupKit skills

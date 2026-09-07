@@ -16,9 +16,26 @@ semantic-ish versioning aligned with the Jahia module version.
   editor's UI language. Display-only: nothing is written to the repository.
   Served by the existing hardened endpoint as a second server-defined task
   (`task: seo`) with its own prompt and whitelisting parser; cached with the
-  audit like the AI review.
+  audit like the AI review. Also proposes `og:title` / `og:description` for
+  the social sharing card.
+- **AI alt text in the Accessibility tab** (when a provider is configured and
+  the page has images without `alt`): per image, a thumbnail, a suggested alt
+  (≤125 chars, page language, Copy, highlight) and a one-line reason; purely
+  decorative images are flagged for an empty alt. Vision-capable providers
+  (Anthropic, OpenAI) receive a downscaled copy of each picture; DeepSeek is
+  text-only, so suggestions there are inferred from file names and context
+  and the UI says so. Third server-defined task (`task: alt`), 8 images per
+  call.
+- **Suggested fixes in the AI review**: recommendations about specific wording
+  now carry a ready-to-copy correction in the page language (typo fixed,
+  stronger CTA label, consistent term…).
 
 ### Fixed
+- The AI review prompt gave the page language as a bare ISO code while the
+  report language was spelled out, so a French-UI editor auditing an English
+  page could be told to translate the page into French. Both languages are
+  now named explicitly, with the rule that content in the page language is
+  correct by definition.
 - DeepSeek V4 models reason by default, which consumed the whole `AI_MAX_TOKENS`
   budget (empty answer, `502`) and made the visible answer ignore the JSON-only
   instruction. Reasoning is now disabled on DeepSeek requests, and an empty

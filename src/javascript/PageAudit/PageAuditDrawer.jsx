@@ -10,7 +10,7 @@ import {runSeo} from './analyzers/seo';
 import {runLinks} from './analyzers/links';
 import {runJahiaHealth, fetchPageLastModified} from './analyzers/jahiaHealth';
 import {removeToolingElements} from './analyzers/tooling';
-import {requestAiReview, requestSeoAssist, fetchAiStatus} from './analyzers/aiReview';
+import {requestAiReview, requestSeoAssist, requestAltAssist, fetchAiStatus} from './analyzers/aiReview';
 import {AccessibilityTab} from './tabs/AccessibilityTab';
 import {VitalsTab} from './tabs/VitalsTab';
 import {ReadabilityTab} from './tabs/ReadabilityTab';
@@ -114,8 +114,12 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
     const [seoAssist, setSeoAssist] = useState(null);
     const [seoAssistPhase, setSeoAssistPhase] = useState('idle');
     const [seoAssistError, setSeoAssistError] = useState(null);
+    // Alt text assist (AI suggestions inside the Accessibility tab)
+    const [altAssist, setAltAssist] = useState(null);
+    const [altPhase, setAltPhase] = useState('idle');
+    const [altError, setAltError] = useState(null);
     // {enabled, provider, model} fetched once per drawer opening; shared by
-    // the AI tab and the SEO assist section
+    // the AI tab and the assist sections
     const [aiStatus, setAiStatus] = useState(null);
     const [runId, setRunId] = useState(0);
     // The iframe is mounted only once the drawer slide-in transition is done:
@@ -149,6 +153,7 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
             setError(null);
             setAiError(null);
             setSeoAssistError(null);
+            setAltError(null);
             // Re-runs need a visible frame for paint-dependent measurements
             setPreviewCollapsed(false);
             highlightedRef.current = null;
@@ -163,6 +168,8 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
                 setAiPhase(cached.aiReview ? 'done' : 'idle');
                 setSeoAssist(cached.seoAssist || null);
                 setSeoAssistPhase(cached.seoAssist ? 'done' : 'idle');
+                setAltAssist(cached.altAssist || null);
+                setAltPhase(cached.altAssist ? 'done' : 'idle');
                 setStatus('ready');
                 // Staleness probe: was the page modified after this audit?
                 if (cached.timestamp) {
@@ -181,6 +188,8 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
                 setAiPhase('idle');
                 setSeoAssist(null);
                 setSeoAssistPhase('idle');
+                setAltAssist(null);
+                setAltPhase('idle');
             }
 
             const timer = setTimeout(() => setFrameVisible(true), 400);
@@ -329,65 +338,55 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
         }
     }, []);
 
-    const generateAiReview = useCallback(async () => {
+    // Every AI result rides in the same cache entry: always persist all of
+    // them, overriding the one that just changed, or one save wipes the others.
+    const persistAi = useCallback(override => {
+        saveCachedAudit(path, language, {
+            schema: CACHE_SCHEMA,
+            timestamp: auditedAt || Date.now(),
+            results,
+            aiReview,
+            seoAssist,
+            altAssist,
+            ...override
+        });
+    }, [path, language, auditedAt, results, aiReview, seoAssist, altAssist]);
+
+    // The three AI tasks share one lifecycle: explicit click, running/done/error
+    // phases, result cached with the audit. Never auto-triggered (cost control).
+    const runAiTask = useCallback(async ({request, cacheKey: key, setResult, setPhase, setErr, label}) => {
         if (!results) {
             return;
         }
 
-        setAiPhase('running');
-        setAiError(null);
+        setPhase('running');
+        setErr(null);
         try {
-            const review = await requestAiReview({
-                language,
-                path,
-                results,
-                frame: frameRef.current
-            });
-            setAiReview(review);
-            setAiPhase('done');
-            saveCachedAudit(path, language, {
-                schema: CACHE_SCHEMA,
-                timestamp: auditedAt || Date.now(),
-                results,
-                aiReview: review,
-                seoAssist
-            });
+            const answer = await request({language, path, results, frame: frameRef.current, aiStatus});
+            setResult(answer);
+            setPhase('done');
+            persistAi({[key]: answer});
         } catch (e) {
-            console.error('[page-audit] AI review failed', e);
-            setAiError(e.message);
-            setAiPhase('error');
+            console.error(`[page-audit] ${label} failed`, e);
+            setErr(e.message);
+            setPhase('error');
         }
-    }, [results, language, path, auditedAt, seoAssist]);
+    }, [results, language, path, persistAi, aiStatus]);
 
-    const generateSeoAssist = useCallback(async () => {
-        if (!results) {
-            return;
-        }
+    const generateAiReview = useCallback(() => runAiTask({
+        request: requestAiReview, cacheKey: 'aiReview', label: 'AI review',
+        setResult: setAiReview, setPhase: setAiPhase, setErr: setAiError
+    }), [runAiTask]);
 
-        setSeoAssistPhase('running');
-        setSeoAssistError(null);
-        try {
-            const assist = await requestSeoAssist({
-                language,
-                path,
-                results,
-                frame: frameRef.current
-            });
-            setSeoAssist(assist);
-            setSeoAssistPhase('done');
-            saveCachedAudit(path, language, {
-                schema: CACHE_SCHEMA,
-                timestamp: auditedAt || Date.now(),
-                results,
-                aiReview,
-                seoAssist: assist
-            });
-        } catch (e) {
-            console.error('[page-audit] SEO assist failed', e);
-            setSeoAssistError(e.message);
-            setSeoAssistPhase('error');
-        }
-    }, [results, language, path, auditedAt, aiReview]);
+    const generateSeoAssist = useCallback(() => runAiTask({
+        request: requestSeoAssist, cacheKey: 'seoAssist', label: 'SEO assist',
+        setResult: setSeoAssist, setPhase: setSeoAssistPhase, setErr: setSeoAssistError
+    }), [runAiTask]);
+
+    const generateAltAssist = useCallback(() => runAiTask({
+        request: requestAltAssist, cacheKey: 'altAssist', label: 'Alt text assist',
+        setResult: setAltAssist, setPhase: setAltPhase, setErr: setAltError
+    }), [runAiTask]);
 
     const exportJson = useCallback(() => {
         if (!results) {
@@ -531,7 +530,20 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
                     {status === 'ready' && results && (
                         <>
                             {activeTab === 'accessibility' && results.a11y &&
-                                <AccessibilityTab result={results.a11y} onHighlight={highlight}/>}
+                                <AccessibilityTab
+                                    result={results.a11y}
+                                    onHighlight={highlight}
+                                    assist={{
+                                        aiStatus,
+                                        assist: altAssist,
+                                        phase: altPhase,
+                                        error: altError,
+                                        language,
+                                        count: results.seo ? results.seo.imagesWithoutAlt : 0,
+                                        onGenerate: generateAltAssist,
+                                        onHighlight: highlight
+                                    }}
+                                />}
                             {activeTab === 'seo' && results.seo &&
                                 <SeoTab
                                     result={results.seo}
