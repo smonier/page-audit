@@ -152,6 +152,38 @@ export function SeoAssist({aiStatus, assist, phase, error, language, onGenerate,
                         </>
                     )}
 
+                    {assist.ctas && assist.ctas.length > 0 && (
+                        <>
+                            <h5 className={styles.subTitle}>{t('seo.assist.ctas')}</h5>
+                            <p className={styles.note}>{t('seo.assist.ctasHint')}</p>
+                            {assist.ctas.map(cta => (
+                                <div key={cta.current} className={styles.rec}>
+                                    <div className={styles.recBody}>
+                                        <div className={styles.headingCurrent}>
+                                            <span>{cta.current}</span>
+                                            <button
+                                                type="button"
+                                                className={styles.smallButton}
+                                                onClick={() => onHighlightText(cta.current)}
+                                            >
+                                                {t('a11y.highlight')}
+                                            </button>
+                                        </div>
+                                        <div className={styles.chips}>
+                                            {cta.suggestions.map(label => (
+                                                <span key={label} className={styles.ctaOption}>
+                                                    <span className={styles.chip}>{label}</span>
+                                                    <CopyButton text={label}/>
+                                                </span>
+                                            ))}
+                                        </div>
+                                        {cta.reason && <div className={styles.recDetail}>{cta.reason}</div>}
+                                    </div>
+                                </div>
+                            ))}
+                        </>
+                    )}
+
                     <p className={styles.note}>
                         {t('ai.poweredBy', {provider: assist.provider, model: assist.model})}
                         {assist.usage && (

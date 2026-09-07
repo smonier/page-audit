@@ -10,7 +10,7 @@ import {runSeo} from './analyzers/seo';
 import {runLinks} from './analyzers/links';
 import {runJahiaHealth, fetchPageLastModified} from './analyzers/jahiaHealth';
 import {removeToolingElements} from './analyzers/tooling';
-import {requestAiReview, requestSeoAssist, requestAltAssist, fetchAiStatus} from './analyzers/aiReview';
+import {requestAiReview, requestSeoAssist, requestAltAssist, requestSimplifyAssist, fetchAiStatus} from './analyzers/aiReview';
 import {AccessibilityTab} from './tabs/AccessibilityTab';
 import {VitalsTab} from './tabs/VitalsTab';
 import {ReadabilityTab} from './tabs/ReadabilityTab';
@@ -32,7 +32,7 @@ const CACHE_MAX_ENTRIES = 10;
 // Bump whenever the cached `results` shape changes (e.g. a new analyzer key),
 // so entries written by an older module version are ignored instead of
 // restored into UI that expects the new shape.
-const CACHE_SCHEMA = 2;
+const CACHE_SCHEMA = 3;
 
 const cacheKey = (path, language) => `${CACHE_PREFIX}${language}:${path}`;
 
@@ -118,6 +118,10 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
     const [altAssist, setAltAssist] = useState(null);
     const [altPhase, setAltPhase] = useState('idle');
     const [altError, setAltError] = useState(null);
+    // Plain-language rewrites (AI suggestions inside the Readability tab)
+    const [simplifyAssist, setSimplifyAssist] = useState(null);
+    const [simplifyPhase, setSimplifyPhase] = useState('idle');
+    const [simplifyError, setSimplifyError] = useState(null);
     // {enabled, provider, model} fetched once per drawer opening; shared by
     // the AI tab and the assist sections
     const [aiStatus, setAiStatus] = useState(null);
@@ -154,6 +158,7 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
             setAiError(null);
             setSeoAssistError(null);
             setAltError(null);
+            setSimplifyError(null);
             // Re-runs need a visible frame for paint-dependent measurements
             setPreviewCollapsed(false);
             highlightedRef.current = null;
@@ -170,6 +175,8 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
                 setSeoAssistPhase(cached.seoAssist ? 'done' : 'idle');
                 setAltAssist(cached.altAssist || null);
                 setAltPhase(cached.altAssist ? 'done' : 'idle');
+                setSimplifyAssist(cached.simplifyAssist || null);
+                setSimplifyPhase(cached.simplifyAssist ? 'done' : 'idle');
                 setStatus('ready');
                 // Staleness probe: was the page modified after this audit?
                 if (cached.timestamp) {
@@ -190,6 +197,8 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
                 setSeoAssistPhase('idle');
                 setAltAssist(null);
                 setAltPhase('idle');
+                setSimplifyAssist(null);
+                setSimplifyPhase('idle');
             }
 
             const timer = setTimeout(() => setFrameVisible(true), 400);
@@ -348,9 +357,10 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
             aiReview,
             seoAssist,
             altAssist,
+            simplifyAssist,
             ...override
         });
-    }, [path, language, auditedAt, results, aiReview, seoAssist, altAssist]);
+    }, [path, language, auditedAt, results, aiReview, seoAssist, altAssist, simplifyAssist]);
 
     // The three AI tasks share one lifecycle: explicit click, running/done/error
     // phases, result cached with the audit. Never auto-triggered (cost control).
@@ -386,6 +396,11 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
     const generateAltAssist = useCallback(() => runAiTask({
         request: requestAltAssist, cacheKey: 'altAssist', label: 'Alt text assist',
         setResult: setAltAssist, setPhase: setAltPhase, setErr: setAltError
+    }), [runAiTask]);
+
+    const generateSimplifyAssist = useCallback(() => runAiTask({
+        request: requestSimplifyAssist, cacheKey: 'simplifyAssist', label: 'Plain-language assist',
+        setResult: setSimplifyAssist, setPhase: setSimplifyPhase, setErr: setSimplifyError
     }), [runAiTask]);
 
     const exportJson = useCallback(() => {
@@ -573,7 +588,19 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
                             {activeTab === 'vitals' && results.vitals &&
                                 <VitalsTab result={results.vitals}/>}
                             {activeTab === 'readability' && results.readability &&
-                                <ReadabilityTab result={results.readability}/>}
+                                <ReadabilityTab
+                                    result={results.readability}
+                                    assist={{
+                                        aiStatus,
+                                        assist: simplifyAssist,
+                                        phase: simplifyPhase,
+                                        error: simplifyError,
+                                        language,
+                                        count: results.readability.longSentences || 0,
+                                        onGenerate: generateSimplifyAssist,
+                                        onHighlightText: highlightText
+                                    }}
+                                />}
                             {activeTab === 'ecodesign' && results.ecodesign &&
                                 <EcodesignTab result={results.ecodesign}/>}
                         </>

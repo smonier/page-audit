@@ -67,6 +67,8 @@ public class AiReviewServlet extends HttpServlet {
     private static final int MAX_ALT_IMAGES = 8;
     private static final int MAX_IMAGE_BASE64_CHARS = 400_000;
     private static final int MAX_CONTEXT_CHARS = 600;
+    private static final int MAX_CTAS = 10;
+    private static final int MAX_SENTENCES = 8;
 
     // Per-user sliding-window rate limit: protects the shared provider quota / cost
     // from a single caller (e.g. 30 reviews per 10 minutes per user).
@@ -151,12 +153,44 @@ public class AiReviewServlet extends HttpServlet {
             + "      \"suggested\": \"improved heading text\",\n"
             + "      \"reason\": \"one sentence IN %2$s: why this is better (descriptive, keyword-aligned, consistent…)\"\n"
             + "    }\n"
+            + "  ],\n"
+            + "  \"ctas\": [\n"
+            + "    {\n"
+            + "      \"current\": \"the exact generic label given under WEAK CALLS TO ACTION\",\n"
+            + "      \"suggestions\": [\"2-3 specific labels (2-5 words, verb + what the visitor gets, fits a button) based on the CTA's context\"],\n"
+            + "      \"reason\": \"one sentence IN %2$s\"\n"
+            + "    }\n"
             + "  ]\n"
             + "}\n"
             + "Only include headings that genuinely benefit from a rewrite (maximum 6); keep good headings out. "
-            + "LANGUAGE RULES: titles, metaDescriptions, social, keywords and every \"suggested\" heading MUST be written in %1$s, "
-            + "because they will be published to the page's visitors. "
+            + "Answer \"ctas\" for every weak call to action listed (empty array when none is listed). "
+            + "LANGUAGE RULES: titles, metaDescriptions, social, keywords, every \"suggested\" heading and every CTA suggestion "
+            + "MUST be written in %1$s, because they will be published to the page's visitors. "
             + "Every \"reason\" MUST be written in %2$s, because it is read by the editor.";
+
+    /**
+     * Plain-language task: rewrite the page's hardest sentences (the ones the
+     * readability score penalizes) without changing their meaning.
+     */
+    private static final String SIMPLIFY_PROMPT =
+            "You are a plain-language editor. You receive the longest, hardest sentences of a CMS page. "
+            + "Rewrite each one for a general audience: shorter sentences (split into two when useful), common words "
+            + "instead of jargon, active voice, one idea per sentence. Preserve every fact, name, number and nuance - "
+            + "never add or drop information, never change the tone from informative to promotional.\n\n"
+            + "Reply ONLY with a valid JSON object. No markdown, no code fences, no comments, no trailing commas.\n"
+            + "JSON structure:\n"
+            + "{\n"
+            + "  \"sentences\": [\n"
+            + "    {\n"
+            + "      \"id\": <the sentence number>,\n"
+            + "      \"rewrite\": \"the plain-language version (may be two sentences)\",\n"
+            + "      \"reason\": \"one sentence: what made the original hard and what changed\"\n"
+            + "    }\n"
+            + "  ]\n"
+            + "}\n"
+            + "Answer for every sentence id you received, in the same order.\n"
+            + "LANGUAGE RULES: every \"rewrite\" MUST be written in %1$s (it replaces published text); "
+            + "every \"reason\" MUST be written in %2$s (it is read by the editor).";
 
     /**
      * Alt text task: one call for every image of the page that lacks an alt
@@ -268,6 +302,10 @@ public class AiReviewServlet extends HttpServlet {
                 systemPrompt = languagePrompt(ALT_TEXT_PROMPT, payload);
                 userContent = buildAltContent(payload, images, supportsVision(configService.getProvider()));
                 break;
+            case "simplify":
+                systemPrompt = languagePrompt(SIMPLIFY_PROMPT, payload);
+                userContent = buildSimplifyContent(payload);
+                break;
             default:
                 task = "review";
                 systemPrompt = SYSTEM_PROMPT;
@@ -287,6 +325,8 @@ public class AiReviewServlet extends HttpServlet {
             } else if ("alt".equals(task)) {
                 review = parseAltText(rawAnswer);
                 review.put("vision", images.length() > 0);
+            } else if ("simplify".equals(task)) {
+                review = parseSimplify(rawAnswer);
             } else {
                 review = parseReview(rawAnswer);
             }
@@ -422,6 +462,25 @@ public class AiReviewServlet extends HttpServlet {
         return sb.toString();
     }
 
+    /** Input for the plain-language task: the hardest sentences, numbered. */
+    private String buildSimplifyContent(JSONObject payload) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("PAGE PATH: ").append(payload.optString("path", "")).append("\n\n");
+        JSONArray sentences = payload.optJSONArray("sentences");
+        int count = sentences == null ? 0 : Math.min(sentences.length(), MAX_SENTENCES);
+        for (int i = 0; i < count; i++) {
+            JSONObject s = sentences.optJSONObject(i);
+            if (s == null) {
+                continue;
+            }
+
+            sb.append("SENTENCE #").append(s.optInt("id", i)).append(" (").append(s.optInt("words", 0)).append(" words):\n")
+                    .append(clipTo(s.optString("text", ""), 1500)).append("\n\n");
+        }
+
+        return sb.toString();
+    }
+
     private void appendIfPresent(StringBuilder sb, String label, String value) {
         if (value != null && !value.isBlank()) {
             sb.append("- ").append(label).append(": ").append(clipTo(value, MAX_CONTEXT_CHARS)).append('\n');
@@ -459,6 +518,34 @@ public class AiReviewServlet extends HttpServlet {
         }
 
         sb.append('\n');
+
+        JSONArray ctas = payload.optJSONArray("ctas");
+        if (ctas != null && ctas.length() > 0) {
+            sb.append("WEAK CALLS TO ACTION (generic link/button labels):\n");
+            for (int i = 0; i < Math.min(ctas.length(), MAX_CTAS); i++) {
+                JSONObject cta = ctas.optJSONObject(i);
+                if (cta == null) {
+                    continue;
+                }
+
+                sb.append("- \"").append(clipTo(cta.optString("text", ""), 100)).append('"');
+                if (cta.optInt("count", 1) > 1) {
+                    sb.append(" (used ").append(cta.optInt("count", 1)).append(" times)");
+                }
+
+                if (!cta.optString("target", "").isBlank()) {
+                    sb.append(" -> ").append(clipTo(cta.optString("target", ""), 150));
+                }
+
+                if (!cta.optString("context", "").isBlank()) {
+                    sb.append(" | context: ").append(clipTo(cta.optString("context", ""), 300));
+                }
+
+                sb.append('\n');
+            }
+
+            sb.append('\n');
+        }
 
         JSONArray findings = payload.optJSONArray("findings");
         if (findings != null && findings.length() > 0) {
@@ -724,6 +811,61 @@ public class AiReviewServlet extends HttpServlet {
         }
 
         safe.put("headings", safeHeadings);
+
+        JSONArray safeCtas = new JSONArray();
+        JSONArray ctas = parsed.optJSONArray("ctas");
+        if (ctas != null) {
+            for (int i = 0; i < Math.min(ctas.length(), MAX_CTAS); i++) {
+                JSONObject c = ctas.optJSONObject(i);
+                if (c == null || c.optString("current", "").isBlank()) {
+                    continue;
+                }
+
+                JSONArray suggestions = safeStrings(c.optJSONArray("suggestions"), MAX_SUGGESTIONS);
+                if (suggestions.length() == 0) {
+                    continue;
+                }
+
+                JSONObject safeC = new JSONObject();
+                safeC.put("current", clip(c.optString("current", "")));
+                safeC.put("suggestions", suggestions);
+                safeC.put("reason", clip(c.optString("reason", "")));
+                safeCtas.put(safeC);
+            }
+        }
+
+        safe.put("ctas", safeCtas);
+        return safe;
+    }
+
+    /** Whitelisting parser for the plain-language answer: bounded list of {id, rewrite, reason}. */
+    private JSONObject parseSimplify(String rawAnswer) {
+        String cleaned = rawAnswer.trim();
+        int start = cleaned.indexOf('{');
+        if (start < 0) {
+            throw new IllegalStateException("model did not return JSON");
+        }
+
+        JSONObject parsed = parseLenient(cleaned.substring(start));
+        JSONArray safeSentences = new JSONArray();
+        JSONArray sentences = parsed.optJSONArray("sentences");
+        if (sentences != null) {
+            for (int i = 0; i < Math.min(sentences.length(), MAX_SENTENCES); i++) {
+                JSONObject s = sentences.optJSONObject(i);
+                if (s == null || !s.has("id") || s.optString("rewrite", "").isBlank()) {
+                    continue;
+                }
+
+                JSONObject safeS = new JSONObject();
+                safeS.put("id", s.optInt("id", -1));
+                safeS.put("rewrite", clipTo(s.optString("rewrite", ""), 1500));
+                safeS.put("reason", clip(s.optString("reason", "")));
+                safeSentences.put(safeS);
+            }
+        }
+
+        JSONObject safe = new JSONObject();
+        safe.put("sentences", safeSentences);
         return safe;
     }
 

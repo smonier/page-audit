@@ -142,9 +142,81 @@ export function requestSeoAssist({language, path, results, frame}) {
         title: seo.title ? seo.title.text : '',
         description: seo.description ? (seo.description.text || '') : '',
         headings: extractHeadings(frame),
+        ctas: seo.weakCtas || [],
         findings: (seo.recommendations || []).map(r => `[seo ${r.severity}] ${r.key} ${JSON.stringify(r.params)}`),
         text: extractPageText(frame)
     });
+}
+
+// Plain-language rewrites: sentences longer than this are candidates,
+// hardest (longest) first, at most this many per request
+const HARD_SENTENCE_WORDS = 22;
+const SIMPLIFY_MAX_SENTENCES = 6;
+
+/** textContent of an inline element minus any script/style it may wrap. */
+function proseText(el) {
+    if (!el.querySelector || !el.querySelector('script, style, noscript, template')) {
+        return el.textContent;
+    }
+
+    const copy = el.cloneNode(true);
+    copy.querySelectorAll('script, style, noscript, template').forEach(n => n.remove());
+    return copy.textContent;
+}
+
+/**
+ * The hardest sentences of the main content (by length - the same signal
+ * the readability score penalizes), each with the selector of its block so
+ * the original can be highlighted after the rewrite.
+ */
+export function collectHardSentences(frame) {
+    const doc = frame && frame.contentDocument;
+    if (!doc || !doc.body) {
+        return {items: [], total: 0};
+    }
+
+    const rootEl = doc.querySelector('main') || doc.body;
+    const blocks = Array.from(rootEl.querySelectorAll('p, li, td, blockquote, dd'))
+        .filter(el => !el.closest('nav, header, footer, script, style, [aria-hidden="true"]'));
+    const candidates = [];
+    blocks.forEach(block => {
+        // Only this block's own text: nested blocks are visited on their own,
+        // and inline scripts/styles are not prose
+        const text = Array.from(block.childNodes)
+            .filter(n => n.nodeType === 3 || !/^(P|LI|TD|BLOCKQUOTE|DD|UL|OL|TABLE|SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(n.tagName))
+            .map(n => (n.nodeType === 3 ? n.textContent : proseText(n)))
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        text.split(/(?<=[.!?…])\s+/).forEach(sentence => {
+            const words = sentence.trim().split(/\s+/).filter(Boolean).length;
+            if (words >= HARD_SENTENCE_WORDS) {
+                candidates.push({text: sentence.trim(), words, selector: cssPath(block)});
+            }
+        });
+    });
+
+    candidates.sort((a, b) => b.words - a.words);
+    const items = candidates.slice(0, SIMPLIFY_MAX_SENTENCES).map((c, id) => ({id, ...c}));
+    return {items, total: candidates.length};
+}
+
+/** Plain-language rewrites of the hardest sentences, in the page language. */
+export async function requestSimplifyAssist({language, path, frame}) {
+    const {items, total} = collectHardSentences(frame);
+    if (items.length === 0) {
+        return {sentences: [], items, total};
+    }
+
+    const answer = await postTask({
+        task: 'simplify',
+        language,
+        uiLanguage: (window.contextJsParameters && window.contextJsParameters.uilang) || language,
+        path,
+        sentences: items.map(({id, text, words}) => ({id, text, words}))
+    });
+
+    return {...answer, items, total};
 }
 
 // Alt text: images per request (server cap too) and thumbnail edge for vision models

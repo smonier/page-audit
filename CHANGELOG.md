@@ -29,6 +29,21 @@ semantic-ish versioning aligned with the Jahia module version.
 - **Suggested fixes in the AI review**: recommendations about specific wording
   now carry a ready-to-copy correction in the page language (typo fixed,
   stronger CTA label, consistent term…).
+- **Call-to-action labels** in the SEO assist: generic link/button labels
+  ("Read more", "Click here", "Submit"… detected after stripping decorations
+  like "Read More +") get 2-3 specific alternatives grounded in the CTA's
+  surrounding text, with Copy and highlight. The SEO generic-anchor check now
+  uses the same normalized matching and covers buttons.
+- **AI plain-language rewrites in the Readability tab** (when a provider is
+  configured and the page has long sentences): up to 6 of the hardest paragraph
+  sentences are rewritten in the page language - same facts, shorter sentences,
+  common words - with before/after word counts, highlight of the original,
+  Copy and a reason. Fourth server-defined task (`task: simplify`). Inline
+  scripts inside content blocks are excluded from the candidates.
+
+### Changed
+- Results cache schema bumped to 3 (the SEO result gained `weakCtas`); older
+  cached audits are discarded and re-run on the next opening.
 
 ### Fixed
 - The AI review prompt gave the page language as a bare ISO code while the

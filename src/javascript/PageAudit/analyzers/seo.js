@@ -9,7 +9,53 @@
 const TITLE_RANGE = [30, 60];
 const DESCRIPTION_RANGE = [50, 160];
 
-const GENERIC_ANCHORS = /^(click here|here|read more|more|learn more|link|cliquez ici|ici|en savoir plus|lire la suite|plus|voir plus)$/i;
+// Link / button labels that say nothing about the destination or the action.
+// Compared after stripping decorations ("Read More +", "En savoir plus »").
+const GENERIC_ANCHORS = /^(click here|here|read more|more|learn more|link|see more|view more|submit|send|go|ok|continue|next|cliquez ici|ici|en savoir plus|lire la suite|plus|voir plus|découvrir|envoyer|soumettre|valider|continuer|suivant)$/i;
+const MAX_WEAK_CTAS = 10;
+
+const normalizeLabel = text => (text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s\W_]+|[\s\W_]+$/g, '')
+    .trim();
+
+/**
+ * Weak calls to action: links and buttons whose label is generic. Returns
+ * distinct labels with a sample of the surrounding text, for the AI assist.
+ */
+function collectWeakCtas(doc) {
+    const controls = Array.from(doc.querySelectorAll('a[href], button, input[type="submit"], input[type="button"]'));
+    const seen = new Map();
+    controls.forEach(el => {
+        const raw = el.tagName === 'INPUT' ? el.value : el.textContent;
+        const label = normalizeLabel(raw);
+        if (!label || !GENERIC_ANCHORS.test(label)) {
+            return;
+        }
+
+        const key = label.toLowerCase();
+        if (seen.has(key)) {
+            seen.get(key).count++;
+            return;
+        }
+
+        // Walk up until the block carries real text beyond the label itself
+        // (the link's own wrapper usually contains nothing else)
+        let block = el.parentElement;
+        while (block && block !== doc.body && (block.textContent || '').replace(/\s+/g, ' ').trim().length < label.length + 40) {
+            block = block.parentElement;
+        }
+
+        seen.set(key, {
+            text: (raw || '').replace(/\s+/g, ' ').trim(),
+            count: 1,
+            target: el.getAttribute('href') || '',
+            context: block ? (block.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300) : ''
+        });
+    });
+
+    return Array.from(seen.values()).slice(0, MAX_WEAK_CTAS);
+}
 
 export function runSeo(frame, language) {
     const doc = frame.contentDocument;
@@ -69,9 +115,10 @@ export function runSeo(frame, language) {
     const imagesWithoutAlt = images.filter(img => !img.hasAttribute('alt')).length;
 
     const badAnchors = Array.from(doc.querySelectorAll('a[href]')).filter(a => {
-        const text = (a.textContent || '').trim();
+        const text = normalizeLabel(a.textContent);
         return text.length > 0 && GENERIC_ANCHORS.test(text);
     }).length;
+    const weakCtas = collectWeakCtas(doc);
 
     const hreflang = doc.querySelectorAll('link[rel="alternate"][hreflang]').length;
 
@@ -88,7 +135,8 @@ export function runSeo(frame, language) {
         hreflang,
         totalImages: images.length,
         imagesWithoutAlt,
-        badAnchors
+        badAnchors,
+        weakCtas
     };
 
     result.recommendations = buildSeoRecommendations(result);

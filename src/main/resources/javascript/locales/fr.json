@@ -248,6 +248,8 @@
                 "keywords": "Mots-clés",
                 "keywordsHint": "Mot-clé principal (foncé) et termes associés à intégrer dans les titres et le texte. Les moteurs ignorent la balise meta keywords : utilisez-les pour guider la rédaction, pas comme balise.",
                 "focus": "Mot-clé principal",
+                "ctas": "Libellés des appels à l'action",
+                "ctasHint": "Les libellés génériques (« En savoir plus », « Cliquez ici », « Envoyer ») n'apprennent rien aux visiteurs ni aux moteurs. Choisissez un libellé précis et appliquez-le au lien ou au bouton dans l'éditeur de contenu.",
                 "headings": "Réécriture des titres",
                 "headingsHint": "Les titres font partie du contenu : modifiez le composant de titre dans l'éditeur de contenu, pas les propriétés SEO.",
                 "missingHeading": "Pas de h1 sur la page - proposition :"
@@ -523,6 +525,17 @@
             }
         },
         "readability": {
+            "simplify": {
+                "title": "Réécritures en langage clair (IA)",
+                "intro": "Le score pénalise les phrases longues ({{count}} de plus de 25 mots). Réécrit jusqu'à 6 des phrases de paragraphe les plus difficiles en langage clair ({{language}}) - mêmes faits, phrases plus courtes, mots courants - à coller à la place de l'original dans l'éditeur de contenu.",
+                "generate": "Réécrire les phrases les plus difficiles",
+                "regenerate": "Regénérer les réécritures",
+                "generating": "Réécriture en cours… cela prend quelques secondes.",
+                "error": "Échec des réécritures en langage clair",
+                "words": "{{count}} mots",
+                "noAnswer": "Aucune réécriture renvoyée pour cette phrase.",
+                "more": "{{count}} autre(s) phrase(s) longue(s) n'ont pas été envoyées (6 par requête) - corrigez celles-ci, relancez l'audit puis réécrivez de nouveau."
+            },
             "score": "Score de lisibilité",
             "bands": {
                 "veryEasy": "Très facile",

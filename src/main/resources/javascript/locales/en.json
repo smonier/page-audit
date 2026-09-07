@@ -248,6 +248,8 @@
                 "keywords": "Keywords",
                 "keywordsHint": "Focus keyword (dark) and supporting terms to weave into headings and copy. Search engines ignore the meta keywords tag - use these to guide the writing, not as a tag.",
                 "focus": "Focus keyword",
+                "ctas": "Call-to-action labels",
+                "ctasHint": "Generic labels (\"Read more\", \"Click here\", \"Submit\") tell visitors and search engines nothing. Pick a specific label and set it on the link or button in Content Editor.",
                 "headings": "Heading rewrites",
                 "headingsHint": "Headings are page content: edit the heading component in Content Editor, not the SEO properties.",
                 "missingHeading": "No h1 on the page - proposed:"
@@ -523,6 +525,17 @@
             }
         },
         "readability": {
+            "simplify": {
+                "title": "AI plain-language rewrites",
+                "intro": "The score penalizes long sentences ({{count}} over 25 words). Rewrite up to 6 of the hardest paragraph sentences in plain language ({{language}}) - same facts, shorter sentences, common words - then paste the rewrite over the original in Content Editor.",
+                "generate": "Rewrite the hardest sentences",
+                "regenerate": "Regenerate rewrites",
+                "generating": "Rewriting… this takes a few seconds.",
+                "error": "Plain-language rewrites failed",
+                "words": "{{count}} words",
+                "noAnswer": "No rewrite returned for this sentence.",
+                "more": "{{count}} more long sentence(s) were not sent (6 per request) - fix these first, re-run the audit and rewrite again."
+            },
             "score": "Readability score",
             "bands": {
                 "veryEasy": "Very easy",

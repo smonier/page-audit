@@ -2,9 +2,10 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import {useTranslation} from 'react-i18next';
 import {Recommendations} from './Recommendations';
+import {SimplifyAssist} from './SimplifyAssist';
 import styles from './Tabs.module.css';
 
-export function ReadabilityTab({result}) {
+export function ReadabilityTab({result, assist}) {
     const {t} = useTranslation('page-audit');
 
     if (result.empty) {
@@ -41,6 +42,8 @@ export function ReadabilityTab({result}) {
 
             <Recommendations items={result.recommendations} ns="readability"/>
 
+            <SimplifyAssist {...assist}/>
+
             <h4 className={styles.sectionTitle}>{t('readability.textStats')}</h4>
             <ul className={styles.statList}>
                 <li>{t('readability.words')}: <strong>{result.words}</strong></li>
@@ -62,5 +65,7 @@ export function ReadabilityTab({result}) {
 }
 
 ReadabilityTab.propTypes = {
-    result: PropTypes.object.isRequired
+    result: PropTypes.object.isRequired,
+    // Props forwarded to <SimplifyAssist/> (AI status, rewrites, phase, callbacks)
+    assist: PropTypes.object.isRequired
 };
