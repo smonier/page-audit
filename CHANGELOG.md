@@ -4,7 +4,10 @@ All notable changes to Page Quality Audit are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/); this project follows
 semantic-ish versioning aligned with the Jahia module version.
 
-## [Unreleased]
+## [1.5.0] - 2026-09-07
+
+AI moves from reviewing to assisting: suggestions appear next to the findings
+they address, in the page language, ready to copy.
 
 ### Added
 - **AI suggestions in the SEO tab** (when a provider is configured): ready-to-paste
@@ -150,6 +153,7 @@ semantic-ish versioning aligned with the Jahia module version.
   re-runnable and exportable as JSON. Full English + French UI.
 - MIT licensed; GitHub Actions CI and Dependabot with platform guardrails.
 
+[1.5.0]: https://github.com/Jahia/page-audit/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Jahia/page-audit/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Jahia/page-audit/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Jahia/page-audit/releases/tag/v1.2.0
