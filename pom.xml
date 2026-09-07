@@ -12,7 +12,7 @@
     <groupId>org.jahia.se.modules</groupId>
     <artifactId>page-audit</artifactId>
     <name>Page Quality Audit</name>
-    <version>1.5.0-SNAPSHOT</version>
+    <version>1.5.0</version>
     <packaging>bundle</packaging>
     <description>jContent UI extension - page quality audit drawer: accessibility (WCAG A to AAA), SEO, links, content health, web vitals, readability.</description>
 
