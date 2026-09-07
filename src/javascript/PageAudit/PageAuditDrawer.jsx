@@ -10,7 +10,7 @@ import {runSeo} from './analyzers/seo';
 import {runLinks} from './analyzers/links';
 import {runJahiaHealth, fetchPageLastModified} from './analyzers/jahiaHealth';
 import {removeToolingElements} from './analyzers/tooling';
-import {requestAiReview} from './analyzers/aiReview';
+import {requestAiReview, requestSeoAssist, fetchAiStatus} from './analyzers/aiReview';
 import {AccessibilityTab} from './tabs/AccessibilityTab';
 import {VitalsTab} from './tabs/VitalsTab';
 import {ReadabilityTab} from './tabs/ReadabilityTab';
@@ -110,6 +110,13 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
     const [aiReview, setAiReview] = useState(null);
     const [aiPhase, setAiPhase] = useState('idle');
     const [aiError, setAiError] = useState(null);
+    // SEO assist (AI suggestions inside the SEO tab) - same lifecycle rules
+    const [seoAssist, setSeoAssist] = useState(null);
+    const [seoAssistPhase, setSeoAssistPhase] = useState('idle');
+    const [seoAssistError, setSeoAssistError] = useState(null);
+    // {enabled, provider, model} fetched once per drawer opening; shared by
+    // the AI tab and the SEO assist section
+    const [aiStatus, setAiStatus] = useState(null);
     const [runId, setRunId] = useState(0);
     // The iframe is mounted only once the drawer slide-in transition is done:
     // loading it while the drawer is still translated off-screen makes Chrome
@@ -124,9 +131,24 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
     const previewUrl = `/cms/render/default/${language}${path}.html?pageAuditRun=${runId}`;
 
     useEffect(() => {
+        if (!isOpen) {
+            return undefined;
+        }
+
+        let cancelled = false;
+        fetchAiStatus()
+            .then(s => !cancelled && setAiStatus(s))
+            .catch(() => !cancelled && setAiStatus({enabled: false, unreachable: true}));
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen]);
+
+    useEffect(() => {
         if (isOpen) {
             setError(null);
             setAiError(null);
+            setSeoAssistError(null);
             // Re-runs need a visible frame for paint-dependent measurements
             setPreviewCollapsed(false);
             highlightedRef.current = null;
@@ -139,6 +161,8 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
                 setAuditedAt(cached.timestamp || null);
                 setAiReview(cached.aiReview || null);
                 setAiPhase(cached.aiReview ? 'done' : 'idle');
+                setSeoAssist(cached.seoAssist || null);
+                setSeoAssistPhase(cached.seoAssist ? 'done' : 'idle');
                 setStatus('ready');
                 // Staleness probe: was the page modified after this audit?
                 if (cached.timestamp) {
@@ -155,6 +179,8 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
                 setAuditedAt(null);
                 setAiReview(null);
                 setAiPhase('idle');
+                setSeoAssist(null);
+                setSeoAssistPhase('idle');
             }
 
             const timer = setTimeout(() => setFrameVisible(true), 400);
@@ -323,14 +349,45 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
                 schema: CACHE_SCHEMA,
                 timestamp: auditedAt || Date.now(),
                 results,
-                aiReview: review
+                aiReview: review,
+                seoAssist
             });
         } catch (e) {
             console.error('[page-audit] AI review failed', e);
             setAiError(e.message);
             setAiPhase('error');
         }
-    }, [results, language, path, auditedAt]);
+    }, [results, language, path, auditedAt, seoAssist]);
+
+    const generateSeoAssist = useCallback(async () => {
+        if (!results) {
+            return;
+        }
+
+        setSeoAssistPhase('running');
+        setSeoAssistError(null);
+        try {
+            const assist = await requestSeoAssist({
+                language,
+                path,
+                results,
+                frame: frameRef.current
+            });
+            setSeoAssist(assist);
+            setSeoAssistPhase('done');
+            saveCachedAudit(path, language, {
+                schema: CACHE_SCHEMA,
+                timestamp: auditedAt || Date.now(),
+                results,
+                aiReview,
+                seoAssist: assist
+            });
+        } catch (e) {
+            console.error('[page-audit] SEO assist failed', e);
+            setSeoAssistError(e.message);
+            setSeoAssistPhase('error');
+        }
+    }, [results, language, path, auditedAt, aiReview]);
 
     const exportJson = useCallback(() => {
         if (!results) {
@@ -476,13 +533,25 @@ export function PageAuditDrawer({isOpen, onClose, path, language}) {
                             {activeTab === 'accessibility' && results.a11y &&
                                 <AccessibilityTab result={results.a11y} onHighlight={highlight}/>}
                             {activeTab === 'seo' && results.seo &&
-                                <SeoTab result={results.seo}/>}
+                                <SeoTab
+                                    result={results.seo}
+                                    assist={{
+                                        aiStatus,
+                                        assist: seoAssist,
+                                        phase: seoAssistPhase,
+                                        error: seoAssistError,
+                                        language,
+                                        onGenerate: generateSeoAssist,
+                                        onHighlightText: highlightText
+                                    }}
+                                />}
                             {activeTab === 'links' && results.links &&
                                 <LinksTab result={results.links} onHighlight={highlight}/>}
                             {activeTab === 'jahia' && results.jahia &&
                                 <JahiaTab result={results.jahia} onHighlightText={highlightText}/>}
                             {activeTab === 'ai' &&
                                 <AiTab
+                                    status={aiStatus}
                                     review={aiReview}
                                     phase={aiPhase}
                                     error={aiError}

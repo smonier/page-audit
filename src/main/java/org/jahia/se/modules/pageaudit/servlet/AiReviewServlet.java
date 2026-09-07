@@ -33,6 +33,9 @@ import java.util.stream.Collectors;
  * GET  /modules/page-audit/ai-review  -> {enabled, provider, model} (never the key)
  * POST /modules/page-audit/ai-review  -> runs the AI review and returns
  *      {provider, model, summary, recommendations: [{severity, category, title, detail, wording}]}
+ * POST with {"task": "seo"}            -> SEO assist: ready-to-use suggestions in the PAGE language
+ *      {provider, model, titles[], metaDescriptions[], keywords: {focus, secondary[]},
+ *       headings: [{level, current, suggested, reason}]}
  *
  * The prompt is built server-side from a constrained payload (page text +
  * audit digest), so this endpoint cannot be abused as a general-purpose LLM
@@ -55,6 +58,11 @@ public class AiReviewServlet extends HttpServlet {
     private static final int MAX_TEXT_CHARS = 15000;
     private static final int MAX_DIGEST_LINES = 60;
     private static final int MAX_RECOMMENDATIONS = 20;
+    private static final int MAX_HEADINGS_IN = 20;
+    private static final int MAX_SUGGESTIONS = 3;
+    private static final int MAX_KEYWORDS = 8;
+    private static final int MAX_HEADING_SUGGESTIONS = 8;
+    private static final int MAX_SUGGESTION_CHARS = 300;
 
     // Per-user sliding-window rate limit: protects the shared provider quota / cost
     // from a single caller (e.g. 30 reviews per 10 minutes per user).
@@ -102,6 +110,40 @@ public class AiReviewServlet extends HttpServlet {
             + "You MUST write every user-facing string (summary, title, detail) in the REPORT LANGUAGE stated in the "
             + "input - regardless of the language of the page text. Only the \"wording\" field keeps the page's own "
             + "language, since it quotes the page verbatim.";
+
+    /**
+     * SEO assist task: unlike the review (prose FOR the editor, in the UI language),
+     * the suggested title, meta descriptions, keywords and headings are content
+     * that will be PUBLISHED to visitors - they must be in the page's language.
+     * Only the per-heading "reason" is editor-facing and follows the UI language.
+     */
+    private static final String SEO_ASSIST_PROMPT =
+            "You are an SEO copywriter helping a CMS content editor optimize one page. "
+            + "You receive the page text, its current title, meta description and headings, and the automated SEO findings. "
+            + "Produce ready-to-paste suggestions grounded ONLY in what the page actually says - never invent facts, "
+            + "offers, numbers or names that are not in the text. Write naturally for humans, no keyword stuffing.\n\n"
+            + "Reply ONLY with a valid JSON object. No markdown, no code fences, no comments, no trailing commas.\n"
+            + "JSON structure:\n"
+            + "{\n"
+            + "  \"titles\": [\"2 alternative <title> tags, 30-60 characters, primary keyword near the start\"],\n"
+            + "  \"metaDescriptions\": [\"3 alternative meta descriptions, 120-155 characters each, one clear benefit + implicit call to click\"],\n"
+            + "  \"keywords\": {\n"
+            + "    \"focus\": \"the single primary keyword or phrase this page should rank for\",\n"
+            + "    \"secondary\": [\"3-6 related terms or long-tail phrases already supported by the page text\"]\n"
+            + "  },\n"
+            + "  \"headings\": [\n"
+            + "    {\n"
+            + "      \"level\": \"h1\" | \"h2\" | \"h3\",\n"
+            + "      \"current\": \"exact current heading text, or empty string when proposing a missing h1\",\n"
+            + "      \"suggested\": \"improved heading text\",\n"
+            + "      \"reason\": \"one sentence IN %2$s: why this is better (descriptive, keyword-aligned, consistent…)\"\n"
+            + "    }\n"
+            + "  ]\n"
+            + "}\n"
+            + "Only include headings that genuinely benefit from a rewrite (maximum 6); keep good headings out. "
+            + "LANGUAGE RULES: titles, metaDescriptions, keywords and every \"suggested\" heading MUST be written in %1$s, "
+            + "because they will be published to the page's visitors. "
+            + "Every \"reason\" MUST be written in %2$s, because it is read by the editor.";
 
     @Reference
     private PageAuditConfigService configService;
@@ -166,19 +208,24 @@ public class AiReviewServlet extends HttpServlet {
             return;
         }
 
-        String userContent = buildUserContent(payload);
+        // Two server-defined tasks share the endpoint and its guards; the client
+        // only picks which one, never the prompt.
+        boolean seoTask = "seo".equalsIgnoreCase(payload.optString("task", "review"));
+        String userContent = seoTask ? buildSeoAssistContent(payload) : buildUserContent(payload);
         String provider = configService.getProvider();
         String model = configService.getModel();
 
+        String rawAnswer = null;
         try {
-            JSONObject providerResult = callProvider(provider, model, userContent);
-            JSONObject review = parseReview(providerResult.getString("text"));
+            JSONObject providerResult = callProvider(provider, model, seoTask ? seoAssistPrompt(payload) : SYSTEM_PROMPT, userContent);
+            rawAnswer = providerResult.getString("text");
+            JSONObject review = seoTask ? parseSeoAssist(rawAnswer) : parseReview(rawAnswer);
             review.put("provider", provider);
             review.put("model", model);
             if (providerResult.optBoolean("truncated", false)) {
                 review.put("truncated", true);
-                logger.warn("AI review answer truncated by AI_MAX_TOKENS ({}); complete recommendations were salvaged",
-                        configService.getMaxTokens());
+                logger.warn("AI {} answer truncated by AI_MAX_TOKENS ({}); complete items were salvaged",
+                        seoTask ? "SEO assist" : "review", configService.getMaxTokens());
             }
 
             long inputTokens = providerResult.optLong("inputTokens", -1);
@@ -197,7 +244,14 @@ public class AiReviewServlet extends HttpServlet {
 
             writeJson(res, HttpServletResponse.SC_OK, review);
         } catch (Exception e) {
-            logger.error("AI review failed", e);
+            logger.error("AI {} failed", seoTask ? "SEO assist" : "review", e);
+            if (rawAnswer != null) {
+                // Server-side only: the start of the unparseable answer is the one
+                // clue to a prompt/model mismatch (prose preamble, refusal, empty content)
+                logger.warn("Unparseable model answer ({} chars) starts with: {}", rawAnswer.length(),
+                        rawAnswer.substring(0, Math.min(rawAnswer.length(), 500)).replaceAll("\\s+", " "));
+            }
+
             writeError(res, HttpServletResponse.SC_BAD_GATEWAY, "AI review temporarily unavailable");
         }
     }
@@ -217,6 +271,59 @@ public class AiReviewServlet extends HttpServlet {
             sb.append("AUTOMATED AUDIT DIGEST:\n");
             int lines = Math.min(findings.length(), MAX_DIGEST_LINES);
             for (int i = 0; i < lines; i++) {
+                sb.append("- ").append(findings.optString(i, "")).append('\n');
+            }
+
+            sb.append('\n');
+        }
+
+        String text = payload.optString("text", "");
+        if (text.length() > MAX_TEXT_CHARS) {
+            text = text.substring(0, MAX_TEXT_CHARS) + "\n[... text truncated ...]";
+        }
+
+        sb.append("PAGE TEXT:\n").append(text);
+        return sb.toString();
+    }
+
+    /** The SEO assist system prompt with the page and report language names spelled out (a reference to "the input" is not followed reliably). */
+    private String seoAssistPrompt(JSONObject payload) {
+        String pageLanguage = payload.optString("language", "en");
+        String uiLanguage = payload.optString("uiLanguage", pageLanguage);
+        return String.format(SEO_ASSIST_PROMPT, languageName(pageLanguage), languageName(uiLanguage));
+    }
+
+    /** Input for the SEO assist task: current SEO state + headings + SEO findings + page text. */
+    private String buildSeoAssistContent(JSONObject payload) {
+        StringBuilder sb = new StringBuilder();
+        String pageLanguage = payload.optString("language", "en");
+        String uiLanguage = payload.optString("uiLanguage", pageLanguage);
+        sb.append("PAGE LANGUAGE: ").append(languageName(pageLanguage)).append('\n');
+        sb.append("REPORT LANGUAGE: ").append(languageName(uiLanguage)).append('\n');
+        sb.append("PAGE PATH: ").append(payload.optString("path", "")).append('\n');
+        sb.append("CURRENT TITLE: ").append(payload.optString("title", "")).append('\n');
+        sb.append("CURRENT META DESCRIPTION: ").append(payload.optString("description", "")).append("\n\n");
+
+        JSONArray headings = payload.optJSONArray("headings");
+        sb.append("CURRENT HEADINGS:\n");
+        if (headings == null || headings.length() == 0) {
+            sb.append("- (none)\n");
+        } else {
+            for (int i = 0; i < Math.min(headings.length(), MAX_HEADINGS_IN); i++) {
+                JSONObject h = headings.optJSONObject(i);
+                if (h != null) {
+                    sb.append("- ").append(h.optString("level", "h?")).append(": ")
+                            .append(h.optString("text", "")).append('\n');
+                }
+            }
+        }
+
+        sb.append('\n');
+
+        JSONArray findings = payload.optJSONArray("findings");
+        if (findings != null && findings.length() > 0) {
+            sb.append("AUTOMATED SEO FINDINGS:\n");
+            for (int i = 0; i < Math.min(findings.length(), MAX_DIGEST_LINES); i++) {
                 sb.append("- ").append(findings.optString(i, "")).append('\n');
             }
 
@@ -267,8 +374,8 @@ public class AiReviewServlet extends HttpServlet {
     }
 
     /** Returns {text, inputTokens, outputTokens} extracted from the provider envelope. */
-    private JSONObject callProvider(String provider, String model, String userContent) throws IOException {
-        String systemPrompt = SYSTEM_PROMPT;
+    private JSONObject callProvider(String provider, String model, String basePrompt, String userContent) throws IOException {
+        String systemPrompt = basePrompt;
         String appendix = configService.getPromptAppendix();
         if (!appendix.isBlank()) {
             systemPrompt += "\n\nAdditional site-specific instructions:\n" + appendix;
@@ -285,6 +392,13 @@ public class AiReviewServlet extends HttpServlet {
             messages.put(new JSONObject().put("role", "system").put("content", systemPrompt));
             messages.put(new JSONObject().put("role", "user").put("content", userContent));
             body.put("messages", messages);
+            if ("deepseek".equalsIgnoreCase(provider)) {
+                // DeepSeek V4 models reason by default: the hidden reasoning_content
+                // consumes the max_tokens budget (empty answer) and the visible
+                // answer tends to ignore the JSON-only instruction. Structured
+                // extraction needs no chain-of-thought - disable it.
+                body.put("thinking", new JSONObject().put("type", "disabled"));
+            }
         } else {
             targetUrl = ANTHROPIC_URL;
             body.put("system", systemPrompt);
@@ -332,7 +446,14 @@ public class AiReviewServlet extends HttpServlet {
             }
         } else {
             JSONObject choice = envelope.getJSONArray("choices").getJSONObject(0);
-            result.put("text", choice.getJSONObject("message").getString("content"));
+            JSONObject message = choice.getJSONObject("message");
+            String content = message.optString("content", "");
+            if (content.isBlank() && message.has("reasoning_content")) {
+                throw new IOException("model spent the whole max_tokens budget on reasoning and returned no answer"
+                        + " - raise AI_MAX_TOKENS or use a non-reasoning model");
+            }
+
+            result.put("text", content);
             result.put("truncated", "length".equals(choice.optString("finish_reason")));
             if (usage != null) {
                 result.put("inputTokens", usage.optLong("prompt_tokens", -1));
@@ -384,6 +505,72 @@ public class AiReviewServlet extends HttpServlet {
 
         safe.put("recommendations", safeRecs);
         return safe;
+    }
+
+    /**
+     * Whitelisting parser for the SEO assist answer: bounded arrays of plain
+     * strings (length-capped), a normalized heading level, nothing else.
+     */
+    private JSONObject parseSeoAssist(String rawAnswer) {
+        String cleaned = rawAnswer.trim();
+        int start = cleaned.indexOf('{');
+        if (start < 0) {
+            throw new IllegalStateException("model did not return JSON");
+        }
+
+        JSONObject parsed = parseLenient(cleaned.substring(start));
+
+        JSONObject safe = new JSONObject();
+        safe.put("titles", safeStrings(parsed.optJSONArray("titles"), MAX_SUGGESTIONS));
+        safe.put("metaDescriptions", safeStrings(parsed.optJSONArray("metaDescriptions"), MAX_SUGGESTIONS));
+
+        JSONObject keywords = parsed.optJSONObject("keywords");
+        JSONObject safeKeywords = new JSONObject();
+        safeKeywords.put("focus", clip(keywords == null ? "" : keywords.optString("focus", "")));
+        safeKeywords.put("secondary", safeStrings(keywords == null ? null : keywords.optJSONArray("secondary"), MAX_KEYWORDS));
+        safe.put("keywords", safeKeywords);
+
+        JSONArray safeHeadings = new JSONArray();
+        JSONArray headings = parsed.optJSONArray("headings");
+        if (headings != null) {
+            for (int i = 0; i < Math.min(headings.length(), MAX_HEADING_SUGGESTIONS); i++) {
+                JSONObject h = headings.optJSONObject(i);
+                if (h == null || h.optString("suggested", "").isBlank()) {
+                    continue;
+                }
+
+                JSONObject safeH = new JSONObject();
+                safeH.put("level", normalize(h.optString("level", "h2"), new String[]{"h1", "h2", "h3"}, "h2"));
+                safeH.put("current", clip(h.optString("current", "")));
+                safeH.put("suggested", clip(h.optString("suggested", "")));
+                safeH.put("reason", clip(h.optString("reason", "")));
+                safeHeadings.put(safeH);
+            }
+        }
+
+        safe.put("headings", safeHeadings);
+        return safe;
+    }
+
+    private JSONArray safeStrings(JSONArray source, int max) {
+        JSONArray out = new JSONArray();
+        if (source == null) {
+            return out;
+        }
+
+        for (int i = 0; i < source.length() && out.length() < max; i++) {
+            String value = clip(source.optString(i, ""));
+            if (!value.isBlank()) {
+                out.put(value);
+            }
+        }
+
+        return out;
+    }
+
+    private String clip(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        return trimmed.length() > MAX_SUGGESTION_CHARS ? trimmed.substring(0, MAX_SUGGESTION_CHARS) : trimmed;
     }
 
     /**

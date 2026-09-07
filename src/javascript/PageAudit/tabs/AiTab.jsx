@@ -1,22 +1,10 @@
-import React, {useEffect, useState} from 'react';
+import React from 'react';
 import PropTypes from 'prop-types';
 import {useTranslation} from 'react-i18next';
-import {fetchAiStatus} from '../analyzers/aiReview';
 import styles from './Tabs.module.css';
 
-export function AiTab({review, phase, error, onGenerate, onHighlightText}) {
+export function AiTab({status, review, phase, error, onGenerate, onHighlightText}) {
     const {t} = useTranslation('page-audit');
-    const [status, setStatus] = useState(null);
-
-    useEffect(() => {
-        let cancelled = false;
-        fetchAiStatus()
-            .then(s => !cancelled && setStatus(s))
-            .catch(() => !cancelled && setStatus({enabled: false, unreachable: true}));
-        return () => {
-            cancelled = true;
-        };
-    }, []);
 
     if (!status) {
         return (
@@ -129,6 +117,8 @@ export function AiTab({review, phase, error, onGenerate, onHighlightText}) {
 }
 
 AiTab.propTypes = {
+    // {enabled, provider, model} from the server, null while loading
+    status: PropTypes.object,
     review: PropTypes.object,
     phase: PropTypes.string.isRequired,
     error: PropTypes.string,

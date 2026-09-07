@@ -4,6 +4,27 @@ All notable changes to Page Quality Audit are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/); this project follows
 semantic-ish versioning aligned with the Jahia module version.
 
+## [Unreleased]
+
+### Added
+- **AI suggestions in the SEO tab** (when a provider is configured): ready-to-paste
+  `<title>` alternatives, meta descriptions with live character counts, a focus
+  keyword plus supporting terms, and heading rewrites (current → suggested with a
+  one-line reason, highlightable in the preview) - each with a Copy button.
+  Suggestions are grounded in the page text and written in the **page's
+  language** since they are published content; only the reasons follow the
+  editor's UI language. Display-only: nothing is written to the repository.
+  Served by the existing hardened endpoint as a second server-defined task
+  (`task: seo`) with its own prompt and whitelisting parser; cached with the
+  audit like the AI review.
+
+### Fixed
+- DeepSeek V4 models reason by default, which consumed the whole `AI_MAX_TOKENS`
+  budget (empty answer, `502`) and made the visible answer ignore the JSON-only
+  instruction. Reasoning is now disabled on DeepSeek requests, and an empty
+  reasoning-only answer produces an explicit server-side diagnostic instead of
+  "model did not return JSON".
+
 ## [1.4.0] - 2026-07-09
 
 ### Added

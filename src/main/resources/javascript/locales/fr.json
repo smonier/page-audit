@@ -144,6 +144,10 @@
                 }
             }
         },
+        "copy": {
+            "action": "Copier",
+            "done": "Copié"
+        },
         "ai": {
             "checking": "Vérification de la disponibilité de la revue IA…",
             "notConfigured": "La revue IA n'est pas configurée sur ce serveur. Un administrateur doit renseigner AI_PROVIDER, AI_MODEL et AI_API_KEY dans :",
@@ -229,6 +233,22 @@
             "jsonLdValue": "{{count}} bloc(s), {{errors}} erreur(s)",
             "hreflangValue": "{{count}} lien(s) de langue alternative",
             "imageAltValue": "{{missing}} images sur {{total}} sans alt",
+            "assist": {
+                "title": "Suggestions IA",
+                "intro": "Propositions de titre, meta description, mots-clés et titres de section prêtes à coller, rédigées dans la langue de la page ({{language}}) par {{provider}} à partir de ce que la page dit réellement. Copiez-les dans les propriétés SEO de la page ou dans le contenu des titres - rien n'est modifié automatiquement.",
+                "generate": "Suggérer avec l'IA",
+                "regenerate": "Regénérer les suggestions",
+                "generating": "Rédaction des suggestions… cela prend quelques secondes.",
+                "error": "Échec des suggestions IA",
+                "titles": "Balise title",
+                "descriptions": "Meta description",
+                "keywords": "Mots-clés",
+                "keywordsHint": "Mot-clé principal (foncé) et termes associés à intégrer dans les titres et le texte. Les moteurs ignorent la balise meta keywords : utilisez-les pour guider la rédaction, pas comme balise.",
+                "focus": "Mot-clé principal",
+                "headings": "Réécriture des titres",
+                "headingsHint": "Les titres font partie du contenu : modifiez le composant de titre dans l'éditeur de contenu, pas les propriétés SEO.",
+                "missingHeading": "Pas de h1 sur la page - proposition :"
+            },
             "fields": {
                 "title": "Titre",
                 "description": "Meta description",

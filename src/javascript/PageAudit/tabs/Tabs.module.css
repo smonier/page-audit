@@ -270,6 +270,94 @@
     word-break: break-word;
 }
 
+/* AI SEO assist (inside the SEO tab) */
+.assist {
+    margin-bottom: 18px;
+}
+
+.subTitle {
+    font-size: 12px;
+    font-weight: 600;
+    margin: 14px 0 6px;
+}
+
+.suggestionList {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.suggestion {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    border: 1px solid #e4e4e4;
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    background: #fff;
+}
+
+.suggestionText {
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+}
+
+.suggestionMeta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.charCount {
+    font-size: 11px;
+    color: #6b7a86;
+    white-space: nowrap;
+}
+
+.chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.chip {
+    background: #eef1f3;
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 12px;
+}
+
+.chipFocus {
+    background: #131c21;
+    color: #fff;
+    font-weight: 600;
+}
+
+.headingCurrent {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #6b7a86;
+    text-decoration: line-through;
+    text-decoration-color: #c5ccd2;
+}
+
+.headingCurrent button {
+    text-decoration: none;
+}
+
+.headingSuggested {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+
 .previewCard {
     border: 1px solid #e4e4e4;
     border-radius: 8px;

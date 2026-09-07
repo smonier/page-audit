@@ -144,6 +144,10 @@
                 }
             }
         },
+        "copy": {
+            "action": "Copy",
+            "done": "Copied"
+        },
         "ai": {
             "checking": "Checking AI review availability…",
             "notConfigured": "AI review is not configured on this server. An administrator must set AI_PROVIDER, AI_MODEL and AI_API_KEY in:",
@@ -229,6 +233,22 @@
             "jsonLdValue": "{{count}} block(s), {{errors}} error(s)",
             "hreflangValue": "{{count}} alternate language link(s)",
             "imageAltValue": "{{missing}} of {{total}} images without alt",
+            "assist": {
+                "title": "AI suggestions",
+                "intro": "Ready-to-paste title, meta description, keyword and heading suggestions, written in the page language ({{language}}) by {{provider}} from what the page actually says. Copy them into the page's SEO properties or the heading content - nothing is changed automatically.",
+                "generate": "Suggest with AI",
+                "regenerate": "Regenerate suggestions",
+                "generating": "Writing suggestions… this takes a few seconds.",
+                "error": "AI suggestions failed",
+                "titles": "Title tag",
+                "descriptions": "Meta description",
+                "keywords": "Keywords",
+                "keywordsHint": "Focus keyword (dark) and supporting terms to weave into headings and copy. Search engines ignore the meta keywords tag - use these to guide the writing, not as a tag.",
+                "focus": "Focus keyword",
+                "headings": "Heading rewrites",
+                "headingsHint": "Headings are page content: edit the heading component in Content Editor, not the SEO properties.",
+                "missingHeading": "No h1 on the page - proposed:"
+            },
             "fields": {
                 "title": "Title",
                 "description": "Meta description",

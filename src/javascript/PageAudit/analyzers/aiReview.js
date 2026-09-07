@@ -96,19 +96,21 @@ export function buildDigest(results) {
     return lines;
 }
 
-export async function requestAiReview({language, path, results, frame}) {
-    const payload = {
-        language,
-        // Recommendations are written FOR the editor: use the jContent UI
-        // language, falling back to the audited page language
-        uiLanguage: (window.contextJsParameters && window.contextJsParameters.uilang) || language,
-        path,
-        title: results.seo ? results.seo.title.text : '',
-        description: results.seo ? (results.seo.description.text || '') : '',
-        findings: buildDigest(results),
-        text: extractPageText(frame)
-    };
+/** Current h1-h3 of the main content, in document order (input for heading suggestions). */
+export function extractHeadings(frame, max = 20) {
+    const doc = frame && frame.contentDocument;
+    if (!doc || !doc.body) {
+        return [];
+    }
 
+    const rootEl = doc.querySelector('main') || doc.body;
+    return Array.from(rootEl.querySelectorAll('h1, h2, h3'))
+        .map(h => ({level: h.tagName.toLowerCase(), text: (h.textContent || '').replace(/\s+/g, ' ').trim()}))
+        .filter(h => h.text)
+        .slice(0, max);
+}
+
+async function postTask(payload) {
     const res = await fetch(ENDPOINT, {
         method: 'POST',
         credentials: 'same-origin',
@@ -122,4 +124,41 @@ export async function requestAiReview({language, path, results, frame}) {
     }
 
     return data;
+}
+
+/**
+ * SEO assist: ready-to-paste title / meta description / keyword / heading
+ * suggestions. Unlike the review, the suggestions are PUBLISHED content and
+ * are written in the audited page language; only the explanatory "reason"
+ * follows the editor's UI language.
+ */
+export function requestSeoAssist({language, path, results, frame}) {
+    const seo = results.seo || {};
+    return postTask({
+        task: 'seo',
+        language,
+        uiLanguage: (window.contextJsParameters && window.contextJsParameters.uilang) || language,
+        path,
+        title: seo.title ? seo.title.text : '',
+        description: seo.description ? (seo.description.text || '') : '',
+        headings: extractHeadings(frame),
+        findings: (seo.recommendations || []).map(r => `[seo ${r.severity}] ${r.key} ${JSON.stringify(r.params)}`),
+        text: extractPageText(frame)
+    });
+}
+
+export function requestAiReview({language, path, results, frame}) {
+    const payload = {
+        language,
+        // Recommendations are written FOR the editor: use the jContent UI
+        // language, falling back to the audited page language
+        uiLanguage: (window.contextJsParameters && window.contextJsParameters.uilang) || language,
+        path,
+        title: results.seo ? results.seo.title.text : '',
+        description: results.seo ? (results.seo.description.text || '') : '',
+        findings: buildDigest(results),
+        text: extractPageText(frame)
+    };
+
+    return postTask(payload);
 }
